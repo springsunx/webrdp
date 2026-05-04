@@ -1,0 +1,14 @@
+{
+  "name": "web-rdp-lite",
+  "version": "1.0.0",
+  "description": "Lightweight Web RDP client based on Nexus Terminal",
+  "scripts": {
+    "start": "./start.sh",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f"
+  },
+  "keywords": ["rdp", "remote-desktop", "web-client", "guacamole"],
+  "author": "",
+  "license": "MIT"
+}

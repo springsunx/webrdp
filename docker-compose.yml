@@ -1,0 +1,37 @@
+services:
+  # Guacd - Apache Guacamole 守护进程
+  guacd:
+    image: guacamole/guacd:latest
+    container_name: webrdp-guacd
+    restart: unless-stopped
+    ports:
+      - "4822:4822"
+    volumes:
+      - guacd-data:/var/lib/guacamole
+    networks:
+      - webrdp-network
+
+  # WebRDP - 合并后的前端+后端服务
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: webrdp-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"    # HTTP + 静态文件 + WebSocket
+    environment:
+      - GUACD_HOST=guacd
+      - GUACD_PORT=4822
+      - PORT=3000
+    depends_on:
+      - guacd
+    networks:
+      - webrdp-network
+
+volumes:
+  guacd-data:
+
+networks:
+  webrdp-network:
+    driver: bridge

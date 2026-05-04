@@ -258,9 +258,65 @@
             max-height: 100%;
         }
         
+        /* 手机端：启用横向滚动，不强制缩放宽度 */
+        @media (max-width: 768px) {
+            .rdp-container {
+                justify-content: flex-start;
+                align-items: center;
+                overflow: auto;
+                -webkit-overflow-scrolling: touch;
+                overscroll-behavior: contain;
+            }
+            
+            #rdp-display {
+                max-width: none;
+                max-height: none;
+                flex-shrink: 0;
+            }
+            
+            /* 滚动提示条 - 仅在内容可滚动时显示 */
+            .scroll-hint {
+                display: block;
+                position: absolute;
+                bottom: 12px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: rgba(59, 130, 246, 0.85);
+                color: #fff;
+                padding: 6px 14px;
+                border-radius: 20px;
+                font-size: 11px;
+                white-space: nowrap;
+                pointer-events: none;
+                opacity: 0;
+                transition: opacity 0.4s ease;
+                z-index: 100;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            }
+            
+            .scroll-hint.visible {
+                opacity: 1;
+            }
+            
+            .scroll-hint::before {
+                content: '⬅';
+                margin-right: 6px;
+            }
+            
+            .scroll-hint::after {
+                content: '➡';
+                margin-left: 6px;
+            }
+        }
+        
         #rdp-display canvas {
             display: block;
             z-index: 1 !important;
+        }
+        
+        /* 滚动提示条 - 桌面端隐藏，手机端在媒体查询中激活 */
+        .scroll-hint {
+            display: none;
         }
         
         .footer {
@@ -512,6 +568,7 @@
                     <p>正在连接...</p>
                 </div>
             </div>
+            <div class="scroll-hint" id="scroll-hint">可左右滑动查看完整桌面</div>
         </div>
         
         <div class="footer">

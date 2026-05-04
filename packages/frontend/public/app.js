@@ -56,7 +56,9 @@ class WebRDPLite {
         this.fullscreenBtn = document.getElementById('fullscreen-btn');
         this.backBtn = document.getElementById('back-btn');
         this.rdpDisplay = document.getElementById('rdp-display');
+        this.rdpContainer = this.rdpDisplay ? this.rdpDisplay.parentElement : null;
         this.loadingElement = document.getElementById('loading');
+        this.scrollHint = document.getElementById('scroll-hint');
         this.footerHost = document.getElementById('footer-host');
         this.footerPort = document.getElementById('footer-port');
         this.footerUser = document.getElementById('footer-user');
@@ -83,6 +85,11 @@ class WebRDPLite {
         // 键盘事件
         document.addEventListener('keydown', (e) => this.handleKeyDown(e));
         document.addEventListener('keyup', (e) => this.handleKeyUp(e));
+        
+        // 窗口大小变化监听（横竖屏切换、窗口缩放）
+        window.addEventListener('resize', () => {
+            this.adjustDisplaySize();
+        });
     }
     
     // 检查URL参数
@@ -141,6 +148,22 @@ class WebRDPLite {
         // 默认分辨率
         let width = 1024;
         let height = 768;
+        
+        const isMobile = this.isMobile();
+        
+        if (isMobile) {
+            // 手机端：使用标准桌面分辨率（1024x768），让用户横向滚动查看
+            // 如果屏幕非常小（<400px宽），用800x600保证可读性
+            if (window.innerWidth < 400) {
+                width = 800;
+                height = 600;
+            } else {
+                width = 1024;
+                height = 768;
+            }
+            console.log(`[Mobile] Using standard resolution: ${width}x${height}, scroll horizontally`);
+            return { width, height };
+        }
         
         // 获取容器的实际尺寸
         const container = this.rdpDisplay || document.getElementById('rdp-display');
@@ -630,11 +653,31 @@ class WebRDPLite {
         setTimeout(() => this.connect(), 100);
     }
     
+    // 判断是否为移动端
+    isMobile() {
+        return window.innerWidth <= 768;
+    }
+    
+    // 显示/隐藏滚动提示
+    showScrollHint(visible) {
+        if (!this.scrollHint) return;
+        if (visible) {
+            this.scrollHint.classList.add('visible');
+            // 3秒后自动隐藏
+            clearTimeout(this._scrollHintTimer);
+            this._scrollHintTimer = setTimeout(() => {
+                this.scrollHint.classList.remove('visible');
+            }, 3000);
+        } else {
+            this.scrollHint.classList.remove('visible');
+        }
+    }
+    
     // 调整显示大小
     adjustDisplaySize() {
         if (!this.guacClient || this.connectionStatus !== 'connected') return;
         
-        const container = this.rdpDisplay.parentElement;
+        const container = this.rdpContainer;
         if (!container) return;
         
         const maxWidth = container.clientWidth - 40;
@@ -643,11 +686,39 @@ class WebRDPLite {
         const width = parseInt(this.connectionParams.width);
         const height = parseInt(this.connectionParams.height);
         
-        const scale = Math.min(maxWidth / width, maxHeight / height, 1);
+        let scale;
+        const isMobile = this.isMobile();
+        
+        if (isMobile) {
+            // 手机端：高度自适应，宽度允许溢出，用横向滚动查看完整画面
+            scale = Math.min(maxHeight / height, 1);
+            // 如果宽度也能完全显示，就不需要滚动了
+            if (width * scale <= maxWidth) {
+                // 宽度足够显示，仍然可以居中，用等比缩放
+                scale = Math.min(maxWidth / width, maxHeight / height, 1);
+            }
+        } else {
+            // 桌面端：保持原样，双维度缩放适应容器
+            scale = Math.min(maxWidth / width, maxHeight / height, 1);
+        }
         
         const displayElement = this.guacClient.getDisplay().getElement();
         displayElement.style.width = `${width * scale}px`;
         displayElement.style.height = `${height * scale}px`;
+        
+        // 若是移动端且内容超出宽度，显示滚动提示
+        if (isMobile) {
+            const displayWidth = width * scale;
+            if (displayWidth > maxWidth) {
+                this.showScrollHint(true);
+            } else {
+                // 宽度可容纳，居中对齐
+                container.style.justifyContent = 'center';
+                this.showScrollHint(false);
+            }
+        } else {
+            this.showScrollHint(false);
+        }
         
         // 发送大小更新到RDP服务器
         this.guacClient.sendSize(width, height);

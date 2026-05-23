@@ -50,13 +50,14 @@ class WebRDPLite {
         
         // 桌面界面元素
         this.desktopContainer = document.getElementById('desktop-container');
+        this.rdpContainer = document.getElementById('rdp-container');
+        this.touchHint = document.getElementById('touch-hint');
         this.statusElement = document.getElementById('status');
         this.disconnectBtn = document.getElementById('disconnect-btn');
         this.reconnectBtn = document.getElementById('reconnect-btn');
         this.fullscreenBtn = document.getElementById('fullscreen-btn');
         this.backBtn = document.getElementById('back-btn');
         this.rdpDisplay = document.getElementById('rdp-display');
-        this.rdpContainer = this.rdpDisplay ? this.rdpDisplay.parentElement : null;
         this.loadingElement = document.getElementById('loading');
         this.scrollHint = document.getElementById('scroll-hint');
         this.footerHost = document.getElementById('footer-host');
@@ -496,6 +497,7 @@ class WebRDPLite {
                 statusText = '已连接';
                 statusClass = 'connected';
                 this.adjustDisplaySize();
+                this.showTouchHint();
                 break;
             case 4: // DISCONNECTING
                 statusText = '正在断开...';
@@ -518,10 +520,6 @@ class WebRDPLite {
         displayElement.tabIndex = 0;
         displayElement.style.cursor = 'none';
         
-        // 鼠标事件
-        // @ts-ignore
-        this.mouse = new Guacamole.Mouse(displayElement);
-        
         const display = this.guacClient.getDisplay();
         display.showCursor(true);
         
@@ -532,6 +530,24 @@ class WebRDPLite {
             if (cursorElement) {
                 cursorElement.style.zIndex = '1000';
             }
+        }
+        
+        // 根据设备类型选择鼠标模式
+        const isMobile = this.isMobile();
+        
+        if (isMobile) {
+            // 手机端：使用 Touchpad 模式
+            // @ts-ignore
+            this.mouse = new Guacamole.Mouse.Touchpad(displayElement);
+            console.log('[WebRDP] 使用 Touchpad 模式（手机端）');
+            
+            // 添加双指滚动容器支持
+            this.setupDualFingerScroll(displayElement);
+        } else {
+            // 桌面端：使用标准鼠标模式
+            // @ts-ignore
+            this.mouse = new Guacamole.Mouse(displayElement);
+            console.log('[WebRDP] 使用 Mouse 模式（桌面端）');
         }
         
         // 鼠标事件处理
@@ -671,6 +687,51 @@ class WebRDPLite {
         } else {
             this.scrollHint.classList.remove('visible');
         }
+    }
+    
+    // 显示触摸操作提示（仅手机端）
+    showTouchHint() {
+        if (!this.touchHint || !this.isMobile()) return;
+        this.touchHint.classList.add('visible');
+        // 5秒后自动隐藏
+        clearTimeout(this._touchHintTimer);
+        this._touchHintTimer = setTimeout(() => {
+            this.touchHint.classList.remove('visible');
+        }, 5000);
+    }
+    
+    // 设置双指滚动容器支持（仅手机端）
+    setupDualFingerScroll(displayElement) {
+        const container = this.rdpContainer;
+        if (!container) return;
+        
+        let lastTouchX = 0;
+        let lastTouchY = 0;
+        
+        // 拦截双指触摸事件，滚动外层容器
+        displayElement.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 2) {
+                lastTouchX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+                lastTouchY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+            }
+        }, { passive: true });
+        
+        displayElement.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 2) {
+                const currentX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+                const currentY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+                
+                const deltaX = currentX - lastTouchX;
+                const deltaY = currentY - lastTouchY;
+                
+                // 滚动外层容器
+                container.scrollLeft -= deltaX;
+                container.scrollTop -= deltaY;
+                
+                lastTouchX = currentX;
+                lastTouchY = currentY;
+            }
+        }, { passive: true });
     }
     
     // 调整显示大小

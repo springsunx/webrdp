@@ -247,6 +247,28 @@
             background-color: #111;
             overflow: hidden;
             position: relative;
+            /* 自定义滚动条样式 */
+            scrollbar-width: thin;
+            scrollbar-color: #555 #222;
+        }
+        
+        .rdp-container::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        .rdp-container::-webkit-scrollbar-track {
+            background: #222;
+            border-radius: 4px;
+        }
+        
+        .rdp-container::-webkit-scrollbar-thumb {
+            background: #555;
+            border-radius: 4px;
+        }
+        
+        .rdp-container::-webkit-scrollbar-thumb:hover {
+            background: #777;
         }
         
         #rdp-display {
@@ -258,27 +280,35 @@
             max-height: 100%;
         }
         
-        /* 手机端：启用横向滚动，不强制缩放宽度 */
+        /* 手机端：启用滚动查看完整远程桌面 */
         @media (max-width: 768px) {
             .rdp-container {
                 justify-content: flex-start;
-                align-items: center;
+                align-items: flex-start;
                 overflow: auto;
                 -webkit-overflow-scrolling: touch;
                 overscroll-behavior: contain;
+                /* 隐藏滚动条 */
+                scrollbar-width: none; /* Firefox */
+                -ms-overflow-style: none; /* IE/Edge */
+            }
+            
+            .rdp-container::-webkit-scrollbar {
+                display: none; /* Chrome/Safari/Opera */
             }
             
             #rdp-display {
                 max-width: none;
                 max-height: none;
                 flex-shrink: 0;
+                margin: 0 auto;
             }
             
             /* 滚动提示条 - 仅在内容可滚动时显示 */
             .scroll-hint {
                 display: block;
-                position: absolute;
-                bottom: 12px;
+                position: fixed;
+                bottom: 50px;
                 left: 50%;
                 transform: translateX(-50%);
                 background: rgba(59, 130, 246, 0.85);
@@ -307,6 +337,30 @@
                 content: '➡';
                 margin-left: 6px;
             }
+            
+            /* 触摸操作提示 */
+            .touch-hint {
+                display: block;
+                position: fixed;
+                top: 80px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: rgba(16, 185, 129, 0.9);
+                color: #fff;
+                padding: 8px 16px;
+                border-radius: 20px;
+                font-size: 12px;
+                white-space: nowrap;
+                pointer-events: none;
+                z-index: 100;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+                opacity: 0;
+                transition: opacity 0.5s ease;
+            }
+            
+            .touch-hint.visible {
+                opacity: 1;
+            }
         }
         
         #rdp-display canvas {
@@ -316,6 +370,11 @@
         
         /* 滚动提示条 - 桌面端隐藏，手机端在媒体查询中激活 */
         .scroll-hint {
+            display: none;
+        }
+        
+        /* 触摸提示 - 桌面端隐藏 */
+        .touch-hint {
             display: none;
         }
         
@@ -574,7 +633,7 @@
             </div>
         </div>
         
-        <div class="rdp-container">
+        <div class="rdp-container" id="rdp-container">
             <div id="rdp-display">
                 <div class="loading" id="loading">
                     <div class="spinner"></div>
@@ -582,6 +641,7 @@
                 </div>
             </div>
             <div class="scroll-hint" id="scroll-hint">可左右滑动查看完整桌面</div>
+            <div class="touch-hint" id="touch-hint">👆 单指操作鼠标 | 👆👆 双指滚动查看</div>
         </div>
         
         <div class="footer">

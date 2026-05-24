@@ -534,8 +534,15 @@ class WebRDPLite {
         
         // 根据设备类型选择鼠标模式
         const isMobile = this.isMobile();
+        const isTouchDevice = this.isTouchDevice();
+        const useTouchscreen = this.shouldUseTouchscreen();
         
-        if (isMobile) {
+        if (useTouchscreen) {
+            // 触摸屏设备或桌面版网站：使用 Touchscreen 模式（直接点击）
+            // @ts-ignore
+            this.mouse = new Guacamole.Mouse.Touchscreen(displayElement);
+            console.log('[WebRDP] 使用 Touchscreen 模式（触摸屏设备）');
+        } else if (isMobile) {
             // 手机端：使用 Touchpad 模式
             // @ts-ignore
             this.mouse = new Guacamole.Mouse.Touchpad(displayElement);
@@ -672,6 +679,24 @@ class WebRDPLite {
     // 判断是否为移动端
     isMobile() {
         return window.innerWidth <= 768;
+    }
+    
+    // 判断是否为触摸屏设备（支持触摸且可能是桌面模式）
+    isTouchDevice() {
+        return ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    }
+    
+    // 判断是否应使用 Touchscreen 模式（触摸屏设备或桌面版网站）
+    shouldUseTouchscreen() {
+        // 如果是触摸屏设备且屏幕宽度大于手机宽度（可能是平板或触摸屏显示器）
+        // 或者启用了桌面版网站模式
+        const isLargeScreen = window.innerWidth > 768;
+        const isTouch = this.isTouchDevice();
+        
+        // 检测是否启用了桌面版网站（通过检测 viewport 缩放）
+        const isDesktopMode = window.outerWidth > window.innerWidth;
+        
+        return isTouch && (isLargeScreen || isDesktopMode);
     }
     
     // 显示/隐藏滚动提示

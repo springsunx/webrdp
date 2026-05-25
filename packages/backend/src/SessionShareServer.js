@@ -544,9 +544,8 @@ class SessionShareServer {
             const client = this.clients.get(clientId);
             if (client && client.ws && client.ws.readyState === WebSocket.OPEN) {
                 try {
-                    // 使用 Buffer 确保数据完整发送
-                    const buffer = Buffer.from(message, 'utf8');
-                    client.ws.send(buffer, { binary: false });
+                    // 直接发送字符串
+                    client.ws.send(message);
                     sentCount++;
                 } catch (e) {
                     console.error(`[SessionShare] 发送给 ${clientId} 失败:`, e.message);

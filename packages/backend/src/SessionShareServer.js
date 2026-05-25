@@ -679,8 +679,8 @@ class SessionShareServer {
             const opcode = buffer.substring(pos, pos + opcodeLen);
             pos += opcodeLen;
 
-            // 读取参数
-            const args = [];
+            // 读取参数（包括 opcode 作为第一个参数）
+            const args = [`${opcodeLen}.${opcode}`];
             while (pos < buffer.length && buffer[pos] === ',') {
                 pos++;
 

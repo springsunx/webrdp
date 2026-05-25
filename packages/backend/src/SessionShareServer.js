@@ -282,19 +282,12 @@ class SessionShareServer {
             case 'args':
                 // guacd 请求连接参数
                 // args 中包含请求的参数名称，需要解析并返回对应的值
-                // 第一个参数是 VERSION_1_5_0，需要忽略
                 const connectionOptions = [];
                 
-                args.forEach((arg, index) => {
+                args.forEach((arg) => {
                     // 解析参数名称（如 "4.hostname" -> "hostname"）
                     const parts = arg.split('.');
                     const paramName = parts.length > 1 ? parts[1] : parts[0];
-                    
-                    // 跳过第一个参数（VERSION_1_5_0）
-                    if (index === 0 && paramName.startsWith('VERSION_')) {
-                        console.log(`[SessionShare] 跳过版本参数: ${paramName}`);
-                        return;
-                    }
                     
                     // 获取对应的值
                     let value = null;
@@ -327,15 +320,15 @@ class SessionShareServer {
                             value = session.params['ignore-cert'] || 'true';
                             break;
                         default:
+                            // 对于未知参数（如 VERSION_1_5_0、timeout、domain 等），返回 null
                             value = null;
                     }
-                    // 确保值不为 undefined
-                    connectionOptions.push(value !== undefined ? value : null);
+                    connectionOptions.push(value);
                 });
                 
                 // 发送连接参数
                 const argsCmd = this.formatOpCode(connectionOptions);
-                console.log(`[SessionShare] 发送连接参数: ${argsCmd.substring(0, 100)}...`);
+                console.log(`[SessionShare] 发送连接参数 (${connectionOptions.length} 个): ${argsCmd.substring(0, 100)}...`);
                 session.guacdSocket.write(argsCmd);
                 break;
 

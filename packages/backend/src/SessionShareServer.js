@@ -674,11 +674,14 @@ class SessionShareServer {
 
             // 读取 opcode
             const opcode = buffer.substring(pos, pos + opcodeLen);
+            const opcodeStr = `${opcodeLen}.${opcode}`;  // 格式化的 opcode
             pos += opcodeLen;
 
             // 读取参数（保留格式化的参数）
-            const args = [];
+            // 包括格式化的 opcode 作为第一个参数
+            const args = [opcodeStr];
             while (pos < buffer.length && buffer[pos] === ',') {
+                const argStart = pos;
                 pos++; // 跳过逗号
 
                 const argLenEnd = buffer.indexOf('.', pos);
@@ -690,7 +693,7 @@ class SessionShareServer {
                 if (buffer.length < pos + argLen + 1) return null;
 
                 // 保留格式化的参数（包括长度前缀）
-                args.push(buffer.substring(pos - argLen.toString().length - 1, pos + argLen));
+                args.push(buffer.substring(argStart + 1, pos + argLen));
                 pos += argLen;
             }
 

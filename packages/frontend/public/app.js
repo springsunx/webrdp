@@ -410,9 +410,9 @@ class WebRDPLite {
             // 生成会话标识
             this.sessionKey = `${this.connectionParams.host}:${this.connectionParams.port}:${this.connectionParams.user}`;
             
-            // 创建WebSocket隧道 - 使用新的会话共享端点
+            // 创建WebSocket隧道 - 使用 GuacamoleLite
             const wsBase = this.getWebSocketUrl();
-            const tunnelUrl = `${wsBase}/ws/session?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(this.clientId)}&width=${this.connectionParams.width}&height=${this.connectionParams.height}`;
+            const tunnelUrl = `${wsBase}?token=${encodeURIComponent(token)}&width=${this.connectionParams.width}&height=${this.connectionParams.height}`;
             
             console.log('[WebRDP] 连接到:', tunnelUrl);
             
@@ -858,29 +858,84 @@ class WebRDPLite {
         }
     }
     
-    // 启动会话轮询
+    // 启动会话控制（使用 WebSocket）
     startSessionPolling() {
         this.stopSessionPolling();
         
-        // 立即获取状态
-        this.pollSessionStatus();
+        // 生成会话标识
+        this.sessionKey = `${this.connectionParams.host}:${this.connectionParams.port}:${this.connectionParams.user}`;
         
-        // 每3秒轮询
-        this.sessionPollInterval = setInterval(() => {
-            this.pollSessionStatus();
-        }, 3000);
+        // 连接到控制 WebSocket
+        const wsBase = this.getWebSocketUrl();
+        const controlUrl = `${wsBase}/ws/control?session=${encodeURIComponent(this.sessionKey)}&clientId=${encodeURIComponent(this.clientId)}`;
         
-        // 每30秒心跳
+        console.log('[WebRDP] 控制连接:', controlUrl);
+        
+        this.controlWs = new WebSocket(controlUrl);
+        
+        this.controlWs.onopen = () => {
+            console.log('[WebRDP] 控制连接已建立');
+        };
+        
+        this.controlWs.onmessage = (event) => {
+            try {
+                const message = JSON.parse(event.data);
+                this.handleControlMessage(message);
+            } catch (e) {
+                console.error('[WebRDP] 解析控制消息失败:', e);
+            }
+        };
+        
+        this.controlWs.onclose = () => {
+            console.log('[WebRDP] 控制连接已关闭');
+        };
+        
+        this.controlWs.onerror = (error) => {
+            console.error('[WebRDP] 控制连接错误:', error);
+        };
+        
+        // 启动心跳
         this.heartbeatInterval = setInterval(() => {
-            this.sendHeartbeat();
+            if (this.controlWs && this.controlWs.readyState === WebSocket.OPEN) {
+                this.controlWs.send(JSON.stringify({ type: 'ping' }));
+            }
         }, 30000);
+    }
+    
+    // 处理控制消息
+    handleControlMessage(message) {
+        switch (message.type) {
+            case 'session-status':
+                this.updateModeDisplay(message.mode, message.controllerId);
+                console.log(`[Session] 会话状态: 模式=${message.mode}, 主控=${message.controllerId}`);
+                break;
+                
+            case 'control-status':
+                if (message.controllerId === this.clientId) {
+                    this.updateModeDisplay('controller', message.controllerId);
+                } else {
+                    this.updateModeDisplay('viewer', message.controllerId);
+                }
+                break;
+                
+            case 'control-denied':
+                console.log(`[Session] ${message.message}`);
+                break;
+                
+            case 'pong':
+                // 心跳响应
+                break;
+                
+            default:
+                console.log('[Session] 未知消息:', message);
+        }
     }
     
     // 停止会话轮询
     stopSessionPolling() {
-        if (this.sessionPollInterval) {
-            clearInterval(this.sessionPollInterval);
-            this.sessionPollInterval = null;
+        if (this.controlWs) {
+            this.controlWs.close();
+            this.controlWs = null;
         }
         if (this.heartbeatInterval) {
             clearInterval(this.heartbeatInterval);
@@ -965,43 +1020,17 @@ class WebRDPLite {
     
     // 请求主控权
     async requestControl() {
-        if (!this.sessionKey || !this.clientId) return;
-        
-        try {
-            await fetch(`${this.backendUrl}/api/session/control`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    session: this.sessionKey,
-                    clientId: this.clientId,
-                    action: 'request'
-                })
-            });
-            
-            this.pollSessionStatus();
-        } catch (e) {
-            console.error('[Session] 请求主控权失败:', e);
+        if (this.controlWs && this.controlWs.readyState === WebSocket.OPEN) {
+            this.controlWs.send(JSON.stringify({ type: 'request-control' }));
+            console.log('[Session] 请求主控权');
         }
     }
     
     // 释放主控权
     async releaseControl() {
-        if (!this.sessionKey || !this.clientId) return;
-        
-        try {
-            await fetch(`${this.backendUrl}/api/session/control`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    session: this.sessionKey,
-                    clientId: this.clientId,
-                    action: 'release'
-                })
-            });
-            
-            this.pollSessionStatus();
-        } catch (e) {
-            console.error('[Session] 释放主控权失败:', e);
+        if (this.controlWs && this.controlWs.readyState === WebSocket.OPEN) {
+            this.controlWs.send(JSON.stringify({ type: 'release-control' }));
+            console.log('[Session] 释放主控权');
         }
     }
     

@@ -85,11 +85,23 @@ class SessionShareServer {
 
         if (session.handshakeComplete) {
             console.log(`[SessionShare v3] 新客户端加入`);
+            
+            // 从 recentData 中找到最后一个完整的 sync 指令，发送 sync 之后的数据
+            // 这样可以确保客户端收到完整的画面帧
             if (session.recentData.length > 0) {
-                const all = session.recentData.join('');
-                console.log(`[SessionShare v3] 重放 ${all.length} bytes`);
-                ws.send(all);
+                let syncData = '';
+                for (let i = session.recentData.length - 1; i >= 0; i--) {
+                    syncData = session.recentData[i] + syncData;
+                    if (session.recentData[i].includes('4.sync,')) {
+                        break;
+                    }
+                }
+                console.log(`[SessionShare v3] 重放 ${syncData.length} bytes (从最后一个 sync 开始)`);
+                if (syncData.length > 0) {
+                    ws.send(syncData);
+                }
             }
+            
             ws.send(JSON.stringify({
                 type: 'session-status', sessionKey,
                 mode: this.clients.get(clientId).mode,

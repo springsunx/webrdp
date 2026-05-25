@@ -99,6 +99,11 @@ class SessionShareServer {
         };
         this.clients.set(clientId, client);
 
+        // 确保 connectionParams 包含 args 参数
+        if (!connectionParams.args) {
+            connectionParams.args = 'connect';
+        }
+
         // 获取或创建会话
         let session = this.sessions.get(sessionKey);
         if (!session) {

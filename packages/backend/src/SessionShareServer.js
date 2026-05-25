@@ -183,7 +183,7 @@ class SessionShareServer {
         });
 
         socket.on('data', (data) => {
-            console.log(`[SessionShare] 收到 guacd 数据: ${data.substring(0, 100)}...`);
+            console.log(`[SessionShare] 收到 guacd 数据 (${data.length} bytes): ${data.substring(0, 100)}...`);
             this.handleGuacdData(sessionKey, data);
         });
 
@@ -195,9 +195,15 @@ class SessionShareServer {
         });
 
         socket.on('error', (error) => {
-            console.error(`[SessionShare] guacd 错误:`, error.message);
+            console.error(`[SessionShare] guacd 连接错误: ${error.message}`);
             session.guacdSocket = null;
-            this.broadcastToSession(sessionKey, { type: 'error', message: error.message });
+            session.state = 'error';
+            
+            // 发送错误消息给客户端
+            this.broadcastToSession(sessionKey, { 
+                type: 'error', 
+                message: `guacd 连接失败: ${error.message}` 
+            });
         });
 
         socket.connect(this.guacdPort, this.guacdHost);

@@ -264,6 +264,7 @@ class SessionShareServer {
             
             // 广播给所有客户端（使用完整的指令字符串）
             if (result.opcode !== 'args') {
+                console.log(`[SessionShare] 广播: ${result.instruction.substring(0, 80)}...`);
                 this.broadcastToSession(sessionKey, result.instruction);
             }
         }

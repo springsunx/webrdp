@@ -532,14 +532,27 @@ class SessionShareServer {
         if (!socket || socket.destroyed) return;
 
         let instruction = '';
-        if (opcode) {
+        
+        // 如果有 opcode，添加 opcode
+        if (opcode && opcode.length > 0) {
             instruction = `${opcode.length}.${opcode}`;
         }
-        for (const arg of args) {
-            instruction += `,${String(arg).length}.${arg}`;
+        
+        // 添加参数
+        for (let i = 0; i < args.length; i++) {
+            const arg = String(args[i]);
+            if (i === 0 && !opcode) {
+                // 第一个参数，没有 opcode
+                instruction = `${arg.length}.${arg}`;
+            } else {
+                // 后续参数
+                instruction += `,${arg.length}.${arg}`;
+            }
         }
+        
         instruction += ';';
 
+        console.log(`[SessionShare] 发送指令: ${instruction.substring(0, 100)}...`);
         socket.write(instruction);
     }
 

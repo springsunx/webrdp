@@ -211,8 +211,10 @@ class SessionShareServer {
                     if (pos < argsRaw.length && argsRaw[pos] === ',') pos++;
                 }
                 
-                // 发送 size/audio/video/image（使用会话的 width/height）
-                const sizeCmd = `4.size,${String(session.width).length}.${session.width},${String(session.height).length}.${session.height},2.96`;
+                // 发送 size/audio/video/image（使用连接参数中的宽度/高度）
+                const rdpWidth = session.params.width || session.width || '1024';
+                const rdpHeight = session.params.height || session.height || '768';
+                const sizeCmd = `4.size,${String(rdpWidth).length}.${rdpWidth},${String(rdpHeight).length}.${rdpHeight},2.96`;
                 console.log(`[SessionShare v3] 发送 size: ${sizeCmd}`);
                 session.guacdSocket.write(sizeCmd + ';');
                 session.guacdSocket.write('5.audio;');

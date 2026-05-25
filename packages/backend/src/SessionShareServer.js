@@ -86,27 +86,14 @@ class SessionShareServer {
         if (session.handshakeComplete) {
             console.log(`[SessionShare v3] 新客户端加入`);
             
-            // 从 recentData 中找到最近的 size 指令，发送从 size 开始的所有数据
-            // 这样客户端可以初始化画布
+            // 先发送 size 指令创建画布，再发送最近的数据
+            if (session.sizeCmd) {
+                ws.send(session.sizeCmd);
+            }
             if (session.recentData.length > 0) {
-                let fullData = '';
-                let foundSize = false;
-                for (let i = session.recentData.length - 1; i >= 0; i--) {
-                    const chunk = session.recentData[i];
-                    fullData = chunk + fullData;
-                    if (chunk.includes('4.size,') || chunk.includes('img') || chunk.includes('png')) {
-                        foundSize = true;
-                        break;
-                    }
-                }
-                // 如果没找到关键指令，发送所有数据
-                if (!foundSize) {
-                    fullData = session.recentData.join('');
-                }
-                console.log(`[SessionShare v3] 重放 ${fullData.length} bytes`);
-                if (fullData.length > 0) {
-                    ws.send(fullData);
-                }
+                const all = session.recentData.join('');
+                console.log(`[SessionShare v3] 重放 ${all.length} bytes`);
+                ws.send(all);
             }
             
             ws.send(JSON.stringify({
@@ -193,7 +180,8 @@ class SessionShareServer {
                 // 发送握手指令
                 const w = session.params.width || session.width || '1024';
                 const h = session.params.height || session.height || '768';
-                session.guacdSocket.write(`4.size,${w.length}.${w},${h.length}.${h},2.96;`);
+                session.sizeCmd = `4.size,${w.length}.${w},${h.length}.${h},2.96;`;
+                session.guacdSocket.write(session.sizeCmd);
                 session.guacdSocket.write('5.audio;');
                 session.guacdSocket.write('5.video;');
                 session.guacdSocket.write('5.image;');

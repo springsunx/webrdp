@@ -186,33 +186,11 @@ class SessionShareServer {
             session.state = 'connecting';
             session.buffer = '';
             
-            // 开始 Guacamole 握手 - 按照 guacamole-lite 的流程发送指令
-            // 1. 选择协议
+            // 开始 Guacamole 握手 - 只发送 select 指令
+            // 其他指令在客户端连接后发送
             const selectCmd = this.formatOpCode(['select', 'rdp']);
             console.log(`[SessionShare] 发送 select: ${selectCmd}`);
             socket.write(selectCmd);
-            
-            // 2. 设置大小
-            console.log(`[SessionShare] width: "${session.width}" (type: ${typeof session.width})`);
-            console.log(`[SessionShare] height: "${session.height}" (type: ${typeof session.height})`);
-            const sizeCmd = this.formatOpCode(['size', String(session.width), String(session.height), '96']);
-            console.log(`[SessionShare] 发送 size: ${sizeCmd}`);
-            socket.write(sizeCmd);
-            
-            // 3. 音频支持
-            const audioCmd = this.formatOpCode(['audio']);
-            console.log(`[SessionShare] 发送 audio: ${audioCmd}`);
-            socket.write(audioCmd);
-            
-            // 4. 视频支持
-            const videoCmd = this.formatOpCode(['video']);
-            console.log(`[SessionShare] 发送 video: ${videoCmd}`);
-            socket.write(videoCmd);
-            
-            // 5. 图像支持
-            const imageCmd = this.formatOpCode(['image']);
-            console.log(`[SessionShare] 发送 image: ${imageCmd}`);
-            socket.write(imageCmd);
         });
 
         socket.on('data', (data) => {
@@ -290,7 +268,24 @@ class SessionShareServer {
         switch (opcode) {
             case 'args':
                 // guacd 请求连接参数
-                // args 中包含请求的参数名称，需要解析并返回对应的值
+                // 先发送 size、audio、video、image 指令
+                const sizeCmd = this.formatOpCode(['size', String(session.width), String(session.height), '96']);
+                console.log(`[SessionShare] 发送 size: ${sizeCmd}`);
+                session.guacdSocket.write(sizeCmd);
+                
+                const audioCmd = this.formatOpCode(['audio']);
+                console.log(`[SessionShare] 发送 audio: ${audioCmd}`);
+                session.guacdSocket.write(audioCmd);
+                
+                const videoCmd = this.formatOpCode(['video']);
+                console.log(`[SessionShare] 发送 video: ${videoCmd}`);
+                session.guacdSocket.write(videoCmd);
+                
+                const imageCmd = this.formatOpCode(['image']);
+                console.log(`[SessionShare] 发送 image: ${imageCmd}`);
+                session.guacdSocket.write(imageCmd);
+                
+                // 然后发送连接参数
                 const connectionOptions = [];
                 
                 console.log(`[SessionShare] session.params:`, JSON.stringify(session.params));

@@ -291,10 +291,14 @@ class SessionShareServer {
         const client = this.clients.get(clientId);
         const session = this.sessions.get(client?.sessionKey);
         if (!session) return false;
+        
+        // 解除旧主控
         if (session.controllerId && session.controllerId !== clientId) {
-            this.sendToClient(clientId, { type: 'control-denied', message: '已有主控' });
-            return false;
+            const oldClient = this.clients.get(session.controllerId);
+            if (oldClient) oldClient.mode = 'viewer';
         }
+        
+        // 设置新主控
         session.controllerId = clientId;
         client.mode = 'controller';
         return true;

@@ -250,27 +250,21 @@ class SessionShareServer {
         session.buffer += data;
         session.lastActivity = Date.now();
 
-        console.log(`[SessionShare] 当前缓冲区长度: ${session.buffer.length}`);
-
         // 解析并处理指令
         while (true) {
             const result = this.parseInstruction(session.buffer);
             if (!result) {
-                console.log(`[SessionShare] 无法解析更多指令，剩余缓冲区: ${session.buffer.length}`);
                 break;
             }
 
-            console.log(`[SessionShare] 解析到指令: ${result.opcode}, 参数: ${JSON.stringify(result.args)}`);
             session.buffer = result.remaining;
             
             // 处理握手相关的指令
             this.handleHandshake(sessionKey, result.opcode, result.args);
             
-            // 广播给所有客户端（除了 args 指令，因为它是内部处理的）
+            // 广播给所有客户端（使用完整的指令字符串）
             if (result.opcode !== 'args') {
-                const instruction = this.buildInstruction(result.opcode, result.args);
-                console.log(`[SessionShare] 广播指令: ${instruction.substring(0, 100)}...`);
-                this.broadcastToSession(sessionKey, instruction);
+                this.broadcastToSession(sessionKey, result.instruction);
             }
         }
     }
@@ -666,6 +660,9 @@ class SessionShareServer {
         let pos = 0;
 
         try {
+            // 记录指令开始位置
+            const instructionStart = pos;
+
             // 读取 opcode 长度
             const opcodeLenEnd = buffer.indexOf('.', pos);
             if (opcodeLenEnd === -1) return null;
@@ -677,14 +674,12 @@ class SessionShareServer {
 
             // 读取 opcode
             const opcode = buffer.substring(pos, pos + opcodeLen);
-            const opcodeStart = pos - opcodeLen.toString().length - 1;  // opcode 的起始位置（包括长度前缀）
             pos += opcodeLen;
 
             // 读取参数（保留格式化的参数）
-            const args = [buffer.substring(opcodeStart, pos)];
+            const args = [];
             while (pos < buffer.length && buffer[pos] === ',') {
-                const argStart = pos;  // 记录参数起始位置（包括逗号）
-                pos++;
+                pos++; // 跳过逗号
 
                 const argLenEnd = buffer.indexOf('.', pos);
                 if (argLenEnd === -1) return null;
@@ -695,14 +690,17 @@ class SessionShareServer {
                 if (buffer.length < pos + argLen + 1) return null;
 
                 // 保留格式化的参数（包括长度前缀）
-                args.push(buffer.substring(argStart + 1, pos + argLen));
+                args.push(buffer.substring(pos - argLen.toString().length - 1, pos + argLen));
                 pos += argLen;
             }
 
             if (pos >= buffer.length || buffer[pos] !== ';') return null;
             pos++;
 
-            return { opcode, args, remaining: buffer.substring(pos) };
+            // 返回完整的指令（从开始到分号）
+            const instruction = buffer.substring(instructionStart, pos);
+
+            return { opcode, args, instruction, remaining: buffer.substring(pos) };
         } catch (e) {
             return null;
         }

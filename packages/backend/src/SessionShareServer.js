@@ -133,12 +133,13 @@ class SessionShareServer {
             this.handleMessage(clientId, data);
         });
 
-        ws.on('close', () => {
+        ws.on('close', (code, reason) => {
+            console.log(`[SessionShare] WebSocket 关闭: code=${code}, reason=${reason}`);
             this.handleDisconnect(clientId);
         });
 
         ws.on('error', (error) => {
-            console.error(`[SessionShare] 客户端错误:`, error.message);
+            console.error(`[SessionShare] WebSocket 错误:`, error.message);
             this.handleDisconnect(clientId);
         });
     }

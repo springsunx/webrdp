@@ -184,7 +184,9 @@ class SessionShareServer {
             socket.write(selectCmd);
             
             // 2. 设置大小
-            const sizeCmd = this.formatOpCode(['size', session.width, session.height, '96']);
+            console.log(`[SessionShare] width: "${session.width}" (type: ${typeof session.width})`);
+            console.log(`[SessionShare] height: "${session.height}" (type: ${typeof session.height})`);
+            const sizeCmd = this.formatOpCode(['size', String(session.width), String(session.height), '96']);
             console.log(`[SessionShare] 发送 size: ${sizeCmd}`);
             socket.write(sizeCmd);
             

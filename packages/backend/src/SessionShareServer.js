@@ -1,12 +1,7 @@
 /**
- * SessionShareServer - 会话共享服务器
+ * SessionShareServer v3 - 会话共享服务器
  * 
- * 核心思路：
- * 1. 直接与 guacd 通信（Guacamole 协议）
- * 2. 维护单个 RDP 连接
- * 3. 多个 WebSocket 客户端共享这个连接
- * 4. 只有主控的指令转发给 guacd
- * 5. 画面数据广播给所有客户端
+ * 核心思路：直接转发原始的 Guacamole 协议数据
  */
 
 const http = require('http');
@@ -21,13 +16,9 @@ class SessionShareServer {
         this.guacdPort = guacdOptions.port || 4822;
         this.clientOptions = clientOptions;
         
-        // 会话 Map: sessionKey -> Session
         this.sessions = new Map();
-        
-        // 客户端 Map: clientId -> ClientInfo
         this.clients = new Map();
         
-        // WebSocket 服务器（禁用压缩）
         this.wss = new WebSocket.Server({ 
             noServer: true,
             perMessageDeflate: false
@@ -36,17 +27,13 @@ class SessionShareServer {
         this.setupWebSocket();
         this.startCleanup();
         
-        console.log('[SessionShare] 会话共享服务器已初始化');
+        console.log('[SessionShare v3] 会话共享服务器已初始化');
     }
 
-    /**
-     * 设置 WebSocket 处理
-     */
     setupWebSocket() {
         this.httpServer.on('upgrade', (request, socket, head) => {
             const url = new URL(request.url, `http://${request.headers.host}`);
             
-            // 只处理 /ws/session 路径
             if (url.pathname !== '/ws/session') {
                 return;
             }
@@ -61,14 +48,10 @@ class SessionShareServer {
         });
     }
 
-    /**
-     * 处理 WebSocket 连接
-     */
     handleConnection(ws, req) {
         const url = new URL(req.url, `http://${req.headers.host}`);
         const clientId = url.searchParams.get('clientId') || this.generateId();
         const token = url.searchParams.get('token');
-        // 清理 width 和 height，移除可能的非数字字符
         const width = (url.searchParams.get('width') || '1024').replace(/[^0-9]/g, '') || '1024';
         const height = (url.searchParams.get('height') || '768').replace(/[^0-9]/g, '') || '768';
 
@@ -77,711 +60,302 @@ class SessionShareServer {
             return;
         }
 
-        // 解析连接参数
         let connectionParams;
         try {
             connectionParams = this.decryptToken(token);
+            if (!connectionParams.args) connectionParams.args = 'connect';
+            console.log('[SessionShare v3] 连接参数:', JSON.stringify(connectionParams));
         } catch (e) {
-            console.error('[SessionShare] Token 解密失败:', e.message);
+            console.error('[SessionShare v3] Token 解密失败:', e.message);
             ws.close(4002, 'Invalid token');
             return;
         }
 
-        // 生成会话标识
         const sessionKey = `${connectionParams.hostname}:${connectionParams.port}:${connectionParams.username}`;
-        
-        console.log(`[SessionShare] 客户端连接: ${clientId}, 会话: ${sessionKey}`);
+        console.log(`[SessionShare v3] 客户端连接: ${clientId}, 会话: ${sessionKey}`);
 
-        // 创建客户端信息
-        const client = {
-            id: clientId,
-            sessionKey: sessionKey,
-            ws: ws,
-            mode: 'viewer',
-            joinedAt: Date.now()
-        };
-        this.clients.set(clientId, client);
+        this.clients.set(clientId, {
+            id: clientId, sessionKey, ws, mode: 'viewer', joinedAt: Date.now()
+        });
 
-        // 确保 connectionParams 包含 args 参数
-        if (!connectionParams.args) {
-            connectionParams.args = 'connect';
-        }
-
-        // 获取或创建会话
         let session = this.sessions.get(sessionKey);
         if (!session) {
-            session = this.createSession(sessionKey, connectionParams, width, height);
+            session = {
+                key: sessionKey, params: connectionParams, width, height,
+                clients: new Set(), controllerId: null,
+                guacdSocket: null, state: 'pending',
+                handshakeComplete: false,
+                createdAt: Date.now(), lastActivity: Date.now()
+            };
+            this.sessions.set(sessionKey, session);
         }
 
-        // 添加客户端到会话
         session.clients.add(clientId);
 
-        // 如果没有主控，设置为自动主控模式（第一个客户端自动成为主控）
         if (!session.controllerId) {
             session.controllerId = clientId;
-            client.mode = 'controller';
-            console.log(`[SessionShare] 客户端 ${clientId} 成为主控`);
+            this.clients.get(clientId).mode = 'controller';
         }
 
         // 如果是主控且 guacd 未连接，建立连接
-        if (client.mode === 'controller' && !session.guacdSocket) {
+        if (this.clients.get(clientId).mode === 'controller' && !session.guacdSocket) {
             this.connectToGuacd(sessionKey);
         }
 
-        // 通知客户端状态
         this.notifyClientStatus(clientId);
 
-        // 处理消息
+        // 处理客户端消息
         ws.on('message', (data) => {
             this.handleMessage(clientId, data);
         });
 
         ws.on('close', (code, reason) => {
-            console.log(`[SessionShare] WebSocket 关闭: code=${code}, reason=${reason}`);
+            console.log(`[SessionShare v3] WebSocket 关闭: ${clientId}, code=${code}`);
             this.handleDisconnect(clientId);
         });
 
         ws.on('error', (error) => {
-            console.error(`[SessionShare] WebSocket 错误:`, error.message);
+            console.error(`[SessionShare v3] WebSocket 错误:`, error.message);
             this.handleDisconnect(clientId);
         });
     }
 
-    /**
-     * 创建会话
-     */
-    createSession(sessionKey, params, width, height) {
-        const session = {
-            key: sessionKey,
-            params: params,
-            width: width,
-            height: height,
-            clients: new Set(),
-            controllerId: null,
-            guacdSocket: null,
-            state: 'pending',
-            buffer: '',
-            createdAt: Date.now(),
-            lastActivity: Date.now()
-        };
-        this.sessions.set(sessionKey, session);
-        console.log(`[SessionShare] 创建会话: ${sessionKey}`);
-        return session;
-    }
-
-    /**
-     * 连接到 guacd
-     */
     connectToGuacd(sessionKey) {
         const session = this.sessions.get(sessionKey);
         if (!session || session.guacdSocket) return;
 
-        console.log(`[SessionShare] 连接到 guacd: ${this.guacdHost}:${this.guacdPort}`);
+        console.log(`[SessionShare v3] 连接 guacd: ${this.guacdHost}:${this.guacdPort}`);
 
         const socket = new net.Socket();
         socket.setEncoding('utf8');
 
         socket.on('connect', () => {
-            console.log(`[SessionShare] guacd 连接成功`);
+            console.log(`[SessionShare v3] guacd 连接成功`);
             session.guacdSocket = socket;
             session.state = 'connecting';
-            session.buffer = '';
+            session.handshakeComplete = false;
             
-            // 开始 Guacamole 握手 - 只发送 select 指令
-            // 其他指令在客户端连接后发送
-            const selectCmd = this.formatOpCode(['select', 'rdp']);
-            console.log(`[SessionShare] 发送 select: ${selectCmd}`);
-            socket.write(selectCmd);
+            // 发送 select 指令
+            socket.write('6.select,3.rdp;');
         });
 
         socket.on('data', (data) => {
-            console.log(`[SessionShare] 收到 guacd 数据 (${data.length} bytes): ${data.substring(0, 100)}...`);
             this.handleGuacdData(sessionKey, data);
         });
 
         socket.on('close', () => {
-            console.log(`[SessionShare] guacd 连接关闭`);
+            console.log(`[SessionShare v3] guacd 连接关闭`);
             session.guacdSocket = null;
             session.state = 'disconnected';
             this.broadcastToSession(sessionKey, { type: 'session-state', state: 'disconnected' });
         });
 
         socket.on('error', (error) => {
-            console.error(`[SessionShare] guacd 连接错误: ${error.message}`);
+            console.error(`[SessionShare v3] guacd 错误:`, error.message);
             session.guacdSocket = null;
-            session.state = 'error';
-            
-            // 发送错误消息给客户端
-            this.broadcastToSession(sessionKey, { 
-                type: 'error', 
-                message: `guacd 连接失败: ${error.message}` 
-            });
+            this.broadcastToSession(sessionKey, { type: 'error', message: error.message });
         });
 
         socket.connect(this.guacdPort, this.guacdHost);
     }
 
-    /**
-     * 处理 guacd 数据
-     */
     handleGuacdData(sessionKey, data) {
         const session = this.sessions.get(sessionKey);
         if (!session) return;
 
-        session.buffer += data;
         session.lastActivity = Date.now();
 
-        // 检查是否需要处理握手
-        if (session.state !== 'connected') {
-            // 解析并处理指令
-            while (true) {
-                const result = this.parseInstruction(session.buffer);
-                if (!result) {
-                    break;
-                }
-
-                session.buffer = result.remaining;
+        if (!session.handshakeComplete) {
+            // 握手阶段：处理 args 指令
+            session.buffer += data;
+            
+            if (session.buffer.includes('4.args,')) {
+                // 收到 args 指令，发送 size/audio/video/image 和连接参数
+                session.guacdSocket.write('4.size,3.800,3.600,2.96;');
+                session.guacdSocket.write('5.audio;');
+                session.guacdSocket.write('5.video;');
+                session.guacdSocket.write('5.image;');
                 
-                // 处理握手相关的指令
-                this.handleHandshake(sessionKey, result.opcode, result.args);
+                // 构建连接参数
+                const p = session.params;
+                const args = [
+                    'connect',          // args
+                    null,               // VERSION_1_5_0
+                    p.hostname,
+                    p.port || '3389',
+                    null,               // timeout
+                    null,               // domain
+                    p.username,
+                    p.password,
+                    session.width,
+                    session.height,
+                    p.dpi || '96',
+                    null, null, null, null, null, null, null, null, null, null,
+                    null, null, null,
+                    p.security || 'any',
+                    p['ignore-cert'] || 'true',
+                    null, null, null, null, null, null, null, null, null, null, null,
+                    null, null, null, null, null, null, null, null, null, null, null,
+                    null, null, null, null, null, null, null, null, null, null, null,
+                    null, null, null, null, null, null, null, null, null, null, null,
+                    null, null, null, null, null, null, null, null, null, null, null,
+                    null, null, null, null, null, null, null
+                ];
                 
-                // 广播给所有客户端（使用完整的指令字符串）
-                if (result.opcode !== 'args') {
-                    this.broadcastToSession(sessionKey, result.instruction);
-                }
+                const argsStr = args.map(a => a === null ? '0.' : `${String(a).length}.${a}`).join(',') + ';';
+                session.guacdSocket.write(argsStr);
+                session.buffer = '';
+            } else if (session.buffer.includes('5.ready,')) {
+                // 收到 ready 指令，握手完成
+                session.handshakeComplete = true;
+                session.state = 'connected';
+                // 将缓冲区数据转发给客户端
+                this.broadcastToSession(sessionKey, session.buffer);
+                session.buffer = '';
+                console.log(`[SessionShare v3] 握手完成`);
             }
         } else {
-            // 连接已就绪，直接转发原始数据
+            // 连接已就绪，直接转发
             this.broadcastToSession(sessionKey, data);
-            session.buffer = '';
         }
     }
 
-    /**
-     * 处理握手
-     */
-    handleHandshake(sessionKey, opcode, args) {
-        const session = this.sessions.get(sessionKey);
-        if (!session) return;
-
-        console.log(`[SessionShare] 握手: ${opcode}, args: ${JSON.stringify(args)}`);
-
-        switch (opcode) {
-            case 'args':
-                // guacd 请求连接参数
-                // 先发送 size、audio、video、image 指令
-                const sizeCmd = this.formatOpCode(['size', String(session.width), String(session.height), '96']);
-                console.log(`[SessionShare] 发送 size: ${sizeCmd}`);
-                session.guacdSocket.write(sizeCmd);
-                
-                const audioCmd = this.formatOpCode(['audio']);
-                console.log(`[SessionShare] 发送 audio: ${audioCmd}`);
-                session.guacdSocket.write(audioCmd);
-                
-                const videoCmd = this.formatOpCode(['video']);
-                console.log(`[SessionShare] 发送 video: ${videoCmd}`);
-                session.guacdSocket.write(videoCmd);
-                
-                const imageCmd = this.formatOpCode(['image']);
-                console.log(`[SessionShare] 发送 image: ${imageCmd}`);
-                session.guacdSocket.write(imageCmd);
-                
-                // 然后发送连接参数
-                const connectionOptions = [];
-                
-                console.log(`[SessionShare] session.params:`, JSON.stringify(session.params));
-                
-                args.forEach((arg) => {
-                    // 解析参数名称（如 "4.hostname" -> "hostname"）
-                    const parts = arg.split('.');
-                    const paramName = parts.length > 1 ? parts[1] : parts[0];
-                    
-                    // 获取对应的值
-                    let value = null;
-                    switch (paramName) {
-                        case 'args':
-                            // 重要：args 参数必须返回 'connect'
-                            value = session.params.args || 'connect';
-                            console.log(`[SessionShare] args 参数值: ${value}`);
-                            break;
-                        case 'hostname':
-                            value = session.params.hostname;
-                            break;
-                        case 'port':
-                            value = session.params.port || '3389';
-                            break;
-                        case 'username':
-                            value = session.params.username;
-                            break;
-                        case 'password':
-                            value = session.params.password;
-                            break;
-                        case 'width':
-                            value = session.width;
-                            break;
-                        case 'height':
-                            value = session.height;
-                            break;
-                        case 'dpi':
-                            value = session.params.dpi || '96';
-                            break;
-                        case 'security':
-                            value = session.params.security || 'any';
-                            break;
-                        case 'ignore-cert':
-                            value = session.params['ignore-cert'] || 'true';
-                            break;
-                        default:
-                            // 对于未知参数，返回 null
-                            value = null;
-                    }
-                    connectionOptions.push(value);
-                });
-                
-                // 发送连接参数
-                const argsCmd = this.formatOpCode(connectionOptions);
-                console.log(`[SessionShare] 发送连接参数 (${connectionOptions.length} 个): ${argsCmd.substring(0, 100)}...`);
-                session.guacdSocket.write(argsCmd);
-                break;
-
-            case 'ready':
-                session.state = 'connected';
-                console.log(`[SessionShare] RDP 连接就绪`);
-                this.broadcastToSession(sessionKey, { type: 'session-state', state: 'connected' });
-                break;
-
-            case 'error':
-                console.error(`[SessionShare] RDP 错误:`, args);
-                session.state = 'error';
-                this.broadcastToSession(sessionKey, { type: 'error', message: args[0] });
-                break;
-
-            case 'disconnect':
-                session.state = 'disconnected';
-                this.broadcastToSession(sessionKey, { type: 'session-state', state: 'disconnected' });
-                break;
-        }
-    }
-
-    /**
-     * 处理客户端消息
-     */
     handleMessage(clientId, data) {
         const client = this.clients.get(clientId);
         if (!client) return;
 
         const dataStr = data.toString();
 
-        // 尝试解析为 JSON（控制消息）
         try {
-            const message = JSON.parse(dataStr);
-            
-            if (message.type === 'request-control') {
-                this.requestControl(clientId);
-                return;
-            }
-            
-            if (message.type === 'release-control') {
-                this.releaseControl(clientId);
-                return;
-            }
-            
-            if (message.type === 'ping') {
-                this.sendToClient(clientId, { type: 'pong' });
-                return;
-            }
-            
+            const msg = JSON.parse(dataStr);
+            if (msg.type === 'request-control') { this.requestControl(clientId); return; }
+            if (msg.type === 'release-control') { this.releaseControl(clientId); return; }
+            if (msg.type === 'ping') { this.sendToClient(clientId, { type: 'pong' }); return; }
             return;
-        } catch (e) {
-            // 不是 JSON，是 Guacamole 指令
-        }
+        } catch (e) {}
 
-        // 只有主控可以发送指令到 guacd
         if (client.mode !== 'controller') return;
-
         const session = this.sessions.get(client.sessionKey);
         if (!session || !session.guacdSocket) return;
-
-        try {
-            session.guacdSocket.write(dataStr);
-        } catch (e) {
-            console.error(`[SessionShare] 转发指令失败:`, e.message);
-        }
+        try { session.guacdSocket.write(dataStr); } catch (e) {}
     }
 
-    /**
-     * 处理断开
-     */
     handleDisconnect(clientId) {
         const client = this.clients.get(clientId);
         if (!client) return;
 
-        console.log(`[SessionShare] 客户端断开: ${clientId}`);
-
         const session = this.sessions.get(client.sessionKey);
         if (session) {
             session.clients.delete(clientId);
-
-            // 如果是主控断开
             if (session.controllerId === clientId) {
                 session.controllerId = null;
-                client.mode = 'viewer';
-
-                // 转移主控权给其他客户端
                 if (session.clients.size > 0) {
-                    const newControllerId = session.clients.values().next().value;
-                    session.controllerId = newControllerId;
-                    const newController = this.clients.get(newControllerId);
-                    if (newController) {
-                        newController.mode = 'controller';
-                        console.log(`[SessionShare] 主控权转移给: ${newControllerId}`);
-                    }
+                    const cid = session.clients.values().next().value;
+                    session.controllerId = cid;
+                    const c = this.clients.get(cid);
+                    if (c) c.mode = 'controller';
                 }
-
                 this.broadcastToSession(client.sessionKey, {
-                    type: 'control-status',
-                    controllerId: session.controllerId
+                    type: 'control-status', controllerId: session.controllerId
                 });
             }
-
-            // 如果没有客户端了，关闭 guacd 连接
             if (session.clients.size === 0) {
-                this.closeSession(client.sessionKey);
+                if (session.guacdSocket) { session.guacdSocket.destroy(); }
+                this.sessions.delete(client.sessionKey);
             }
         }
-
         this.clients.delete(clientId);
     }
 
-    /**
-     * 请求主控权
-     */
     requestControl(clientId) {
         const client = this.clients.get(clientId);
-        if (!client) return;
-
+        if (!client) return false;
         const session = this.sessions.get(client.sessionKey);
-        if (!session) return;
-
-        // 如果已有主控且不是自己，拒绝
+        if (!session) return false;
         if (session.controllerId && session.controllerId !== clientId) {
-            this.sendToClient(clientId, {
-                type: 'control-denied',
-                message: '已有其他客户端获得主控权'
-            });
-            return;
+            this.sendToClient(clientId, { type: 'control-denied', message: '已有主控' });
+            return false;
         }
-
-        // 设置为主控
         session.controllerId = clientId;
         client.mode = 'controller';
-
-        // 建立 guacd 连接（如果还没有）
-        if (!session.guacdSocket) {
-            this.connectToGuacd(client.sessionKey);
-        }
-
-        this.broadcastToSession(client.sessionKey, {
-            type: 'control-status',
-            controllerId: clientId
-        });
-
-        console.log(`[SessionShare] 客户端 ${clientId} 获取主控权`);
+        this.broadcastToSession(client.sessionKey, { type: 'control-status', controllerId: clientId });
+        return true;
     }
 
-    /**
-     * 释放主控权
-     */
     releaseControl(clientId) {
         const client = this.clients.get(clientId);
         if (!client) return;
-
         const session = this.sessions.get(client.sessionKey);
         if (!session || session.controllerId !== clientId) return;
-
         session.controllerId = null;
         client.mode = 'viewer';
-
-        // 转移主控权
         if (session.clients.size > 0) {
             for (const cid of session.clients) {
-                if (cid !== clientId) {
-                    session.controllerId = cid;
-                    const otherClient = this.clients.get(cid);
-                    if (otherClient) {
-                        otherClient.mode = 'controller';
-                    }
-                    break;
-                }
+                if (cid !== clientId) { session.controllerId = cid; this.clients.get(cid).mode = 'controller'; break; }
             }
         }
-
-        this.broadcastToSession(client.sessionKey, {
-            type: 'control-status',
-            controllerId: session.controllerId
-        });
-
-        console.log(`[SessionShare] 客户端 ${clientId} 释放主控权`);
+        this.broadcastToSession(client.sessionKey, { type: 'control-status', controllerId: session.controllerId });
     }
 
-    /**
-     * 广播数据给会话中的所有客户端
-     */
     broadcastToSession(sessionKey, data) {
         const session = this.sessions.get(sessionKey);
         if (!session) return;
-
-        // 如果数据是对象类型（如 JSON 消息），直接发送
-        // 如果是字符串类型（Guacamole 指令），也直接发送
         const message = typeof data === 'string' ? data : JSON.stringify(data);
-
-        let sentCount = 0;
-        for (const clientId of session.clients) {
-            const client = this.clients.get(clientId);
-            if (client && client.ws && client.ws.readyState === WebSocket.OPEN) {
-                try {
-                    // 直接发送字符串
-                    client.ws.send(message);
-                    sentCount++;
-                } catch (e) {
-                    console.error(`[SessionShare] 发送给 ${clientId} 失败:`, e.message);
-                }
+        for (const cid of session.clients) {
+            const c = this.clients.get(cid);
+            if (c && c.ws && c.ws.readyState === WebSocket.OPEN) {
+                try { c.ws.send(message); } catch (e) {}
             }
-        }
-        
-        if (sentCount > 0 && typeof data === 'string') {
-            console.log(`[SessionShare] 广播给 ${sentCount} 个客户端，数据长度: ${data.length}`);
         }
     }
 
-    /**
-     * 发送数据给单个客户端
-     */
     sendToClient(clientId, data) {
-        const client = this.clients.get(clientId);
-        if (client && client.ws.readyState === WebSocket.OPEN) {
-            try {
-                client.ws.send(typeof data === 'string' ? data : JSON.stringify(data));
-            } catch (e) {
-                console.error(`[SessionShare] 发送失败:`, e.message);
-            }
+        const c = this.clients.get(clientId);
+        if (c && c.ws && c.ws.readyState === WebSocket.OPEN) {
+            try { c.ws.send(typeof data === 'string' ? data : JSON.stringify(data)); } catch (e) {}
         }
     }
 
-    /**
-     * 通知客户端状态
-     */
     notifyClientStatus(clientId) {
-        const client = this.clients.get(clientId);
-        if (!client) return;
-
-        const session = this.sessions.get(client.sessionKey);
-        if (!session) return;
-
+        const c = this.clients.get(clientId);
+        if (!c) return;
+        const s = this.sessions.get(c.sessionKey);
+        if (!s) return;
         this.sendToClient(clientId, {
-            type: 'session-status',
-            sessionKey: client.sessionKey,
-            mode: client.mode,
-            controllerId: session.controllerId,
-            clientCount: session.clients.size,
-            state: session.state
+            type: 'session-status', sessionKey: c.sessionKey,
+            mode: c.mode, controllerId: s.controllerId,
+            clientCount: s.clients.size, state: s.state
         });
     }
 
-    /**
-     * 关闭会话
-     */
-    closeSession(sessionKey) {
-        const session = this.sessions.get(sessionKey);
-        if (session) {
-            if (session.guacdSocket && !session.guacdSocket.destroyed) {
-                session.guacdSocket.destroy();
-            }
-            this.sessions.delete(sessionKey);
-            console.log(`[SessionShare] 关闭会话: ${sessionKey}`);
-        }
-    }
-
-    /**
-     * 格式化 Guacamole 指令（参考 guacamole-lite）
-     */
-    formatOpCode(opCodeParts) {
-        return opCodeParts.map(part => {
-            // 处理 null、undefined 和空字符串
-            if (part === null || part === undefined) {
-                part = '';
-            }
-            return String(part).length + '.' + String(part);
-        }).join(',') + ';';
-    }
-
-    /**
-     * 发送 Guacamole 指令
-     */
-    sendGuacInstruction(socket, opcode, ...args) {
-        if (!socket || socket.destroyed) return;
-
-        let instruction = '';
-        
-        // 如果有 opcode，添加 opcode
-        if (opcode && opcode.length > 0) {
-            instruction = `${opcode.length}.${opcode}`;
-        }
-        
-        // 添加参数
-        for (let i = 0; i < args.length; i++) {
-            const arg = String(args[i]);
-            if (i === 0 && !opcode) {
-                // 第一个参数，没有 opcode
-                instruction = `${arg.length}.${arg}`;
-            } else {
-                // 后续参数
-                instruction += `,${arg.length}.${arg}`;
-            }
-        }
-        
-        instruction += ';';
-
-        console.log(`[SessionShare] 发送指令: ${instruction.substring(0, 100)}...`);
-        socket.write(instruction);
-    }
-
-    /**
-     * 构建指令字符串
-     */
-    buildInstruction(opcode, args) {
-        // args 已经包含了格式化的参数（如 "5.ready"）
-        // 直接连接它们
-        return args.join(',') + ';';
-    }
-
-    /**
-     * 解析下一个指令
-     */
-    parseInstruction(buffer) {
-        if (!buffer || buffer.length === 0) return null;
-
-        let pos = 0;
-
-        try {
-            // 记录指令开始位置
-            const instructionStart = pos;
-
-            // 读取 opcode 长度
-            const opcodeLenEnd = buffer.indexOf('.', pos);
-            if (opcodeLenEnd === -1) return null;
-
-            const opcodeLen = parseInt(buffer.substring(pos, opcodeLenEnd), 10);
-            pos = opcodeLenEnd + 1;
-
-            if (buffer.length < pos + opcodeLen + 1) return null;
-
-            // 读取 opcode
-            const opcode = buffer.substring(pos, pos + opcodeLen);
-            const opcodeStr = `${opcodeLen}.${opcode}`;  // 格式化的 opcode
-            pos += opcodeLen;
-
-            // 读取参数（保留格式化的参数）
-            // 包括格式化的 opcode 作为第一个参数
-            const args = [opcodeStr];
-            while (pos < buffer.length && buffer[pos] === ',') {
-                const argStart = pos;
-                pos++; // 跳过逗号
-
-                const argLenEnd = buffer.indexOf('.', pos);
-                if (argLenEnd === -1) return null;
-
-                const argLen = parseInt(buffer.substring(pos, argLenEnd), 10);
-                pos = argLenEnd + 1;
-
-                if (buffer.length < pos + argLen + 1) return null;
-
-                // 保留格式化的参数（包括长度前缀）
-                args.push(buffer.substring(argStart + 1, pos + argLen));
-                pos += argLen;
-            }
-
-            if (pos >= buffer.length || buffer[pos] !== ';') return null;
-            pos++;
-
-            // 返回完整的指令（从开始到分号）
-            const instruction = buffer.substring(instructionStart, pos);
-            
-            // 验证指令格式
-            if (!instruction.endsWith(';')) {
-                console.error(`[SessionShare] 指令格式错误，缺少分号: ${instruction}`);
-            }
-
-            return { opcode, args, instruction, remaining: buffer.substring(pos) };
-        } catch (e) {
-            return null;
-        }
-    }
-
-    /**
-     * 生成唯一 ID
-     */
-    generateId() {
-        return crypto.randomBytes(8).toString('hex');
-    }
-
-    /**
-     * 解密 token
-     */
     decryptToken(token) {
-        try {
-            // 解析 base64 编码的外层 JSON
-            const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
-            const iv = Buffer.from(decoded.iv, 'base64');
-            const encrypted = Buffer.from(decoded.value, 'base64');
-            
-            // 获取加密密钥
-            const key = this.clientOptions.crypt?.key;
-            if (!key) {
-                throw new Error('Encryption key not configured');
-            }
-            
-            // 解密
-            const keyBuffer = Buffer.isBuffer(key) ? key : Buffer.from(key);
-            const decipher = crypto.createDecipheriv('aes-256-cbc', keyBuffer.slice(0, 32), iv);
-            let decrypted = decipher.update(encrypted, 'base64', 'utf8');
-            decrypted += decipher.final('utf8');
-            
-            // 解析解密后的 JSON
-            const data = JSON.parse(decrypted);
-            console.log(`[SessionShare] 解密成功:`, data);
-            
-            return data.connection?.settings || data;
-        } catch (e) {
-            console.error('[SessionShare] Token 解密失败:', e.message);
-            throw e;
-        }
+        const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
+        const iv = Buffer.from(decoded.iv, 'base64');
+        const encrypted = Buffer.from(decoded.value, 'base64');
+        const key = this.clientOptions.crypt?.key;
+        const keyBuffer = Buffer.isBuffer(key) ? key : Buffer.from(key);
+        const decipher = crypto.createDecipheriv('aes-256-cbc', keyBuffer.slice(0, 32), iv);
+        let dt = decipher.update(encrypted, 'base64', 'utf8');
+        dt += decipher.final('utf8');
+        return JSON.parse(dt).connection?.settings || JSON.parse(dt);
     }
 
-    /**
-     * 清理过期会话
-     */
+    generateId() { return crypto.randomBytes(8).toString('hex'); }
+
     startCleanup() {
         setInterval(() => {
-            const now = Date.now();
-            const timeout = 5 * 60 * 1000; // 5分钟
-
-            for (const [key, session] of this.sessions) {
-                if (session.clients.size === 0 || (now - session.lastActivity > timeout)) {
-                    this.closeSession(key);
+            const timeout = 5 * 60 * 1000;
+            for (const [key, s] of this.sessions) {
+                if (s.clients.size === 0 || Date.now() - s.lastActivity > timeout) {
+                    if (s.guacdSocket) s.guacdSocket.destroy();
+                    this.sessions.delete(key);
                 }
             }
         }, 30000);
     }
 
-    /**
-     * 获取统计信息
-     */
     getStats() {
-        return {
-            sessions: this.sessions.size,
-            clients: this.clients.size
-        };
+        return { sessions: this.sessions.size, clients: this.clients.size };
     }
 }
 

@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const cors = require('cors');
 
 // 会话共享组件
-const SessionShareServerV2 = require('./SessionShareServerV2');
+const SessionShareServer = require('./SessionShareServer');
 
 // 配置
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -200,26 +200,8 @@ const clientOptions = {
   },
 };
 
-// 初始化 Guacamole Lite 服务器 - 使用 httpServer 参数
-try {
-  console.log(`[WebRDP] 初始化 GuacamoleLite: Guacd=${guacdOptions.host}:${guacdOptions.port}`);
-  const guacServer = new GuacamoleLite({ server }, guacdOptions, clientOptions);
-  console.log('[WebRDP] GuacamoleLite 初始化成功。');
-
-  guacServer.on('error', (error) => {
-    console.error('[WebRDP] GuacamoleLite 服务器错误:', error);
-  });
-
-  guacServer.on('connection', (client) => {
-    console.log(`[WebRDP] 新连接: 客户端 ID=${client.id}`);
-  });
-} catch (error) {
-  console.error('[WebRDP] 初始化 GuacamoleLite 失败:', error);
-  process.exit(1);
-}
-
-// 初始化会话共享服务器（只处理控制连接）
-const sessionShareServer = new SessionShareServerV2(server, guacdOptions, clientOptions);
+// 初始化会话共享服务器
+const sessionShareServer = new SessionShareServer(server, guacdOptions, clientOptions);
 console.log('[WebRDP] 会话共享服务器初始化成功');
 
 // 启动 HTTP 服务器

@@ -410,9 +410,9 @@ class WebRDPLite {
             // 生成会话标识
             this.sessionKey = `${this.connectionParams.host}:${this.connectionParams.port}:${this.connectionParams.user}`;
             
-            // 创建WebSocket隧道 - 使用 GuacamoleLite
+            // 创建WebSocket隧道 - 使用会话共享
             const wsBase = this.getWebSocketUrl();
-            const tunnelUrl = `${wsBase}?token=${encodeURIComponent(token)}&width=${this.connectionParams.width}&height=${this.connectionParams.height}`;
+            const tunnelUrl = `${wsBase}/ws/session?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(this.clientId)}&width=${this.connectionParams.width}&height=${this.connectionParams.height}`;
             
             console.log('[WebRDP] 连接到:', tunnelUrl);
             

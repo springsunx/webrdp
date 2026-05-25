@@ -216,11 +216,11 @@ class SessionShareServer {
 
             session.buffer = result.remaining;
             
-            // 处理握手
-            if (session.state !== 'connected') {
-                this.handleHandshake(sessionKey, result.opcode, result.args);
-            } else {
-                // 广播给所有客户端
+            // 处理握手相关的指令
+            this.handleHandshake(sessionKey, result.opcode, result.args);
+            
+            // 广播给所有客户端（除了 args 指令，因为它是内部处理的）
+            if (result.opcode !== 'args') {
                 const instruction = this.buildInstruction(result.opcode, result.args);
                 this.broadcastToSession(sessionKey, instruction);
             }

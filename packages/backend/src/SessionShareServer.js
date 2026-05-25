@@ -216,17 +216,27 @@ class SessionShareServer {
                 session.buffer = '';
             }
         } else {
-            // 转发数据
-            this.broadcastToSession(sessionKey, dataStr);
-
-            // 存储完整数据用于新客户端同步
-            session.recentData.push(dataStr);
-            let total = 0;
-            for (let i = session.recentData.length - 1; i >= 0; i--) {
-                total += session.recentData[i].length;
-                if (total > 300000) {
-                    session.recentData = session.recentData.slice(i + 1);
-                    break;
+            // 使用缓冲区组装完整指令
+            session.buffer = (session.buffer || '') + dataStr;
+            
+            // 查找最后一个分号位置
+            const lastSemi = session.buffer.lastIndexOf(';');
+            if (lastSemi >= 0) {
+                // 提取完整指令并转发
+                const complete = session.buffer.substring(0, lastSemi + 1);
+                session.buffer = session.buffer.substring(lastSemi + 1);
+                
+                this.broadcastToSession(sessionKey, complete);
+                
+                // 存储用于新客户端同步
+                session.recentData.push(complete);
+                let total = 0;
+                for (let i = session.recentData.length - 1; i >= 0; i--) {
+                    total += session.recentData[i].length;
+                    if (total > 300000) {
+                        session.recentData = session.recentData.slice(i + 1);
+                        break;
+                    }
                 }
             }
         }

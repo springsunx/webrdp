@@ -289,6 +289,8 @@ class SessionShareServer {
                 // args 中包含请求的参数名称，需要解析并返回对应的值
                 const connectionOptions = [];
                 
+                console.log(`[SessionShare] session.params:`, JSON.stringify(session.params));
+                
                 args.forEach((arg) => {
                     // 解析参数名称（如 "4.hostname" -> "hostname"）
                     const parts = arg.split('.');
@@ -299,7 +301,8 @@ class SessionShareServer {
                     switch (paramName) {
                         case 'args':
                             // 重要：args 参数必须返回 'connect'
-                            value = 'connect';
+                            value = session.params.args || 'connect';
+                            console.log(`[SessionShare] args 参数值: ${value}`);
                             break;
                         case 'hostname':
                             value = session.params.hostname;

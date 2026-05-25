@@ -858,84 +858,67 @@ class WebRDPLite {
         }
     }
     
-    // 启动会话控制（使用 WebSocket）
+    // 启动会话控制（使用 HTTP 轮询）
     startSessionPolling() {
         this.stopSessionPolling();
         
         // 生成会话标识
         this.sessionKey = `${this.connectionParams.host}:${this.connectionParams.port}:${this.connectionParams.user}`;
         
-        // 连接到控制 WebSocket
-        const wsBase = this.getWebSocketUrl();
-        const controlUrl = `${wsBase}/ws/control?session=${encodeURIComponent(this.sessionKey)}&clientId=${encodeURIComponent(this.clientId)}`;
-        
-        console.log('[WebRDP] 控制连接:', controlUrl);
-        
-        this.controlWs = new WebSocket(controlUrl);
-        
-        this.controlWs.onopen = () => {
-            console.log('[WebRDP] 控制连接已建立');
-        };
-        
-        this.controlWs.onmessage = (event) => {
-            try {
-                const message = JSON.parse(event.data);
-                this.handleControlMessage(message);
-            } catch (e) {
-                console.error('[WebRDP] 解析控制消息失败:', e);
-            }
-        };
-        
-        this.controlWs.onclose = () => {
-            console.log('[WebRDP] 控制连接已关闭');
-        };
-        
-        this.controlWs.onerror = (error) => {
-            console.error('[WebRDP] 控制连接错误:', error);
-        };
+        // 启动轮询
+        this.pollSessionStatus();
+        this.sessionPollInterval = setInterval(() => {
+            this.pollSessionStatus();
+        }, 3000);
         
         // 启动心跳
         this.heartbeatInterval = setInterval(() => {
-            if (this.controlWs && this.controlWs.readyState === WebSocket.OPEN) {
-                this.controlWs.send(JSON.stringify({ type: 'ping' }));
-            }
+            this.sendHeartbeat();
         }, 30000);
     }
     
-    // 处理控制消息
-    handleControlMessage(message) {
-        switch (message.type) {
-            case 'session-status':
-                this.updateModeDisplay(message.mode, message.controllerId);
-                console.log(`[Session] 会话状态: 模式=${message.mode}, 主控=${message.controllerId}`);
-                break;
-                
-            case 'control-status':
-                if (message.controllerId === this.clientId) {
-                    this.updateModeDisplay('controller', message.controllerId);
-                } else {
-                    this.updateModeDisplay('viewer', message.controllerId);
+    // 轮询会话状态
+    async pollSessionStatus() {
+        if (!this.sessionKey || !this.clientId) return;
+        
+        try {
+            const response = await fetch(`${this.backendUrl}/api/session/status?session=${encodeURIComponent(this.sessionKey)}&clientId=${encodeURIComponent(this.clientId)}`);
+            const data = await response.json();
+            
+            if (data.exists) {
+                const newMode = data.controllerId === this.clientId ? 'controller' : 'viewer';
+                if (newMode !== this.sessionMode || data.controllerId !== this.controllerId) {
+                    this.updateModeDisplay(newMode, data.controllerId);
                 }
-                break;
-                
-            case 'control-denied':
-                console.log(`[Session] ${message.message}`);
-                break;
-                
-            case 'pong':
-                // 心跳响应
-                break;
-                
-            default:
-                console.log('[Session] 未知消息:', message);
+            }
+        } catch (e) {
+            console.error('[Session] 轮询状态失败:', e);
+        }
+    }
+    
+    // 发送心跳
+    async sendHeartbeat() {
+        if (!this.sessionKey || !this.clientId) return;
+        
+        try {
+            await fetch(`${this.backendUrl}/api/session/heartbeat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session: this.sessionKey,
+                    clientId: this.clientId
+                })
+            });
+        } catch (e) {
+            console.error('[Session] 心跳失败:', e);
         }
     }
     
     // 停止会话轮询
     stopSessionPolling() {
-        if (this.controlWs) {
-            this.controlWs.close();
-            this.controlWs = null;
+        if (this.sessionPollInterval) {
+            clearInterval(this.sessionPollInterval);
+            this.sessionPollInterval = null;
         }
         if (this.heartbeatInterval) {
             clearInterval(this.heartbeatInterval);
@@ -1020,17 +1003,45 @@ class WebRDPLite {
     
     // 请求主控权
     async requestControl() {
-        if (this.controlWs && this.controlWs.readyState === WebSocket.OPEN) {
-            this.controlWs.send(JSON.stringify({ type: 'request-control' }));
-            console.log('[Session] 请求主控权');
+        if (!this.sessionKey || !this.clientId) return;
+        
+        try {
+            await fetch(`${this.backendUrl}/api/session/control`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session: this.sessionKey,
+                    clientId: this.clientId,
+                    action: 'request'
+                })
+            });
+            
+            // 立即更新状态
+            this.pollSessionStatus();
+        } catch (e) {
+            console.error('[Session] 请求主控权失败:', e);
         }
     }
     
     // 释放主控权
     async releaseControl() {
-        if (this.controlWs && this.controlWs.readyState === WebSocket.OPEN) {
-            this.controlWs.send(JSON.stringify({ type: 'release-control' }));
-            console.log('[Session] 释放主控权');
+        if (!this.sessionKey || !this.clientId) return;
+        
+        try {
+            await fetch(`${this.backendUrl}/api/session/control`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session: this.sessionKey,
+                    clientId: this.clientId,
+                    action: 'release'
+                })
+            });
+            
+            // 立即更新状态
+            this.pollSessionStatus();
+        } catch (e) {
+            console.error('[Session] 释放主控权失败:', e);
         }
     }
     

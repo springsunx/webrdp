@@ -15,10 +15,11 @@ const net = require('net');
 const crypto = require('crypto');
 
 class SessionShareServer {
-    constructor(httpServer, guacdOptions) {
+    constructor(httpServer, guacdOptions, clientOptions = {}) {
         this.httpServer = httpServer;
         this.guacdHost = guacdOptions.host || 'localhost';
         this.guacdPort = guacdOptions.port || 4822;
+        this.clientOptions = clientOptions;
         
         // 会话 Map: sessionKey -> Session
         this.sessions = new Map();
@@ -627,11 +628,33 @@ class SessionShareServer {
      * 解密 token
      */
     decryptToken(token) {
-        // 这里需要与主服务器的加密方式一致
-        // 简化处理：假设 token 是 base64 编码的 JSON
-        const decoded = Buffer.from(token, 'base64').toString('utf8');
-        const data = JSON.parse(decoded);
-        return data.connection?.settings || data;
+        try {
+            // 解析 base64 编码的外层 JSON
+            const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
+            const iv = Buffer.from(decoded.iv, 'base64');
+            const encrypted = Buffer.from(decoded.value, 'base64');
+            
+            // 获取加密密钥
+            const key = this.clientOptions.crypt?.key;
+            if (!key) {
+                throw new Error('Encryption key not configured');
+            }
+            
+            // 解密
+            const keyBuffer = Buffer.isBuffer(key) ? key : Buffer.from(key);
+            const decipher = crypto.createDecipheriv('aes-256-cbc', keyBuffer.slice(0, 32), iv);
+            let decrypted = decipher.update(encrypted, 'base64', 'utf8');
+            decrypted += decipher.final('utf8');
+            
+            // 解析解密后的 JSON
+            const data = JSON.parse(decrypted);
+            console.log(`[SessionShare] 解密成功:`, data);
+            
+            return data.connection?.settings || data;
+        } catch (e) {
+            console.error('[SessionShare] Token 解密失败:', e.message);
+            throw e;
+        }
     }
 
     /**

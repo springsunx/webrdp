@@ -201,7 +201,7 @@ const clientOptions = {
 };
 
 // 初始化会话共享服务器
-const sessionShareServer = new SessionShareServer(server, guacdOptions);
+const sessionShareServer = new SessionShareServer(server, guacdOptions, clientOptions);
 console.log('[WebRDP] 会话共享服务器初始化成功');
 
 // 启动 HTTP 服务器

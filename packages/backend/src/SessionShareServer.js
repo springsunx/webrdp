@@ -170,39 +170,50 @@ class SessionShareServer {
             session.buffer += data;
             
             if (session.buffer.includes('4.args,')) {
-                // 收到 args 指令，发送 size/audio/video/image 和连接参数
+                // 解析 args 中的参数名称
+                const argsMatch = session.buffer.match(/4\.args,(.*?);/);
+                if (!argsMatch) return;
+                
+                const argsRaw = argsMatch[1];
+                const paramNames = [];
+                let pos = 0;
+                while (pos < argsRaw.length) {
+                    const dotPos = argsRaw.indexOf('.', pos);
+                    if (dotPos === -1) break;
+                    const len = parseInt(argsRaw.substring(pos, dotPos), 10);
+                    pos = dotPos + 1;
+                    const val = argsRaw.substring(pos, pos + len);
+                    pos += len;
+                    paramNames.push(val);
+                    if (pos < argsRaw.length && argsRaw[pos] === ',') pos++;
+                }
+                
+                // 发送 size/audio/video/image
                 session.guacdSocket.write('4.size,3.800,3.600,2.96;');
                 session.guacdSocket.write('5.audio;');
                 session.guacdSocket.write('5.video;');
                 session.guacdSocket.write('5.image;');
                 
-                // 构建连接参数
-                const p = session.params;
-                const args = [
-                    'connect',          // args
-                    null,               // VERSION_1_5_0
-                    p.hostname,
-                    p.port || '3389',
-                    null,               // timeout
-                    null,               // domain
-                    p.username,
-                    p.password,
-                    session.width,
-                    session.height,
-                    p.dpi || '96',
-                    null, null, null, null, null, null, null, null, null, null,
-                    null, null, null,
-                    p.security || 'any',
-                    p['ignore-cert'] || 'true',
-                    null, null, null, null, null, null, null, null, null, null, null,
-                    null, null, null, null, null, null, null, null, null, null, null,
-                    null, null, null, null, null, null, null, null, null, null, null,
-                    null, null, null, null, null, null, null, null, null, null, null,
-                    null, null, null, null, null, null, null, null, null, null, null,
-                    null, null, null, null, null, null, null
-                ];
+                // 构建连接参数值
+                const paramValues = paramNames.map(name => {
+                    const p = session.params;
+                    switch (name) {
+                        case 'args': return 'connect';
+                        case 'hostname': return p.hostname;
+                        case 'port': return p.port || '3389';
+                        case 'username': return p.username;
+                        case 'password': return p.password;
+                        case 'width': return session.width;
+                        case 'height': return session.height;
+                        case 'dpi': return p.dpi || '96';
+                        case 'security': return p.security || 'any';
+                        case 'ignore-cert': return p['ignore-cert'] || 'true';
+                        default: return null;
+                    }
+                });
                 
-                const argsStr = args.map(a => a === null ? '0.' : `${String(a).length}.${a}`).join(',') + ';';
+                const argsStr = paramValues.map(v => v === null || v === undefined ? '0.' : `${String(v).length}.${v}`).join(',') + ';';
+                console.log(`[SessionShare v3] 发送 ${paramValues.length} 个连接参数`);
                 session.guacdSocket.write(argsStr);
                 session.buffer = '';
             } else if (session.buffer.includes('5.ready,')) {

@@ -139,12 +139,12 @@ class SessionShareServer {
         socket.on('close', () => {
             session.guacdSocket = null;
             session.state = 'disconnected';
-            this.broadcastToSession(sessionKey, { type: 'session-state', state: 'disconnected' });
+            this.broadcastJson(sessionKey, { type: 'session-state', state: 'disconnected' });
         });
 
         socket.on('error', (error) => {
             session.guacdSocket = null;
-            this.broadcastToSession(sessionKey, { type: 'error', message: error.message });
+            this.broadcastJson(sessionKey, { type: 'error', message: error.message });
         });
 
         socket.connect(this.guacdPort, this.guacdHost);
@@ -277,7 +277,7 @@ class SessionShareServer {
                     const c = this.clients.get(cid);
                     if (c) c.mode = 'controller';
                 }
-                this.broadcastToSession(client.sessionKey, { type: 'control-status', controllerId: session.controllerId });
+                // 状态通过 HTTP API 轮询获取
             }
             if (session.clients.size === 0) {
                 if (session.guacdSocket) session.guacdSocket.destroy();
@@ -297,7 +297,6 @@ class SessionShareServer {
         }
         session.controllerId = clientId;
         client.mode = 'controller';
-        this.broadcastToSession(client.sessionKey, { type: 'control-status', controllerId: clientId });
         return true;
     }
 
@@ -310,17 +309,33 @@ class SessionShareServer {
         for (const cid of session.clients) {
             if (cid !== clientId) { session.controllerId = cid; this.clients.get(cid).mode = 'controller'; break; }
         }
-        this.broadcastToSession(client.sessionKey, { type: 'control-status', controllerId: session.controllerId });
     }
 
+    // 广播 Guacamole 协议数据给所有客户端
     broadcastToSession(sessionKey, data) {
         const session = this.sessions.get(sessionKey);
         if (!session) return;
-        const msg = typeof data === 'string' ? data : JSON.stringify(data);
+        
+        // 只发送字符串数据
+        if (typeof data !== 'string') return;
+        
         for (const cid of session.clients) {
             const c = this.clients.get(cid);
             if (c?.ws?.readyState === WebSocket.OPEN) {
-                try { c.ws.send(msg); } catch (e) {}
+                try { c.ws.send(data); } catch (e) {}
+            }
+        }
+    }
+
+    // 广播 JSON 消息（发送给所有客户端）
+    broadcastJson(sessionKey, msg) {
+        const session = this.sessions.get(sessionKey);
+        if (!session) return;
+        const data = JSON.stringify(msg);
+        for (const cid of session.clients) {
+            const c = this.clients.get(cid);
+            if (c?.ws?.readyState === WebSocket.OPEN) {
+                try { c.ws.send(data); } catch (e) {}
             }
         }
     }

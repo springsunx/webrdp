@@ -19,8 +19,7 @@ COPY packages/frontend/public ./public
 RUN mkdir -p ./public/guacamole-common-js/dist && \
     npm pack guacamole-common-js@1.5.0 && \
     tar -xzf guacamole-common-js-1.5.0.tgz && \
-    cp package/dist/cjs/guacamole-common.min.js ./public/guacamole-common-js/dist/ && \
-    sed -i 's/module\.exports=Guacamole;//g' ./public/guacamole-common-js/dist/guacamole-common.min.js && \
+    head -c -27 package/dist/cjs/guacamole-common.min.js > ./public/guacamole-common-js/dist/guacamole-common.min.js && \
     rm -rf package guacamole-common-js-1.5.0.tgz
 
 # 暴露端口

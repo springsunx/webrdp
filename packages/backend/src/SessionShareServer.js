@@ -250,23 +250,29 @@ class SessionShareServer {
         session.buffer += data;
         session.lastActivity = Date.now();
 
-        // 解析并处理指令
-        while (true) {
-            const result = this.parseInstruction(session.buffer);
-            if (!result) {
-                break;
-            }
+        // 检查是否需要处理握手
+        if (session.state !== 'connected') {
+            // 解析并处理指令
+            while (true) {
+                const result = this.parseInstruction(session.buffer);
+                if (!result) {
+                    break;
+                }
 
-            session.buffer = result.remaining;
-            
-            // 处理握手相关的指令
-            this.handleHandshake(sessionKey, result.opcode, result.args);
-            
-            // 广播给所有客户端（使用完整的指令字符串）
-            if (result.opcode !== 'args') {
-                console.log(`[SessionShare] 广播: ${result.instruction.substring(0, 80)}...`);
-                this.broadcastToSession(sessionKey, result.instruction);
+                session.buffer = result.remaining;
+                
+                // 处理握手相关的指令
+                this.handleHandshake(sessionKey, result.opcode, result.args);
+                
+                // 广播给所有客户端（使用完整的指令字符串）
+                if (result.opcode !== 'args') {
+                    this.broadcastToSession(sessionKey, result.instruction);
+                }
             }
+        } else {
+            // 连接已就绪，直接转发原始数据
+            this.broadcastToSession(sessionKey, data);
+            session.buffer = '';
         }
     }
 

@@ -194,6 +194,10 @@ class SessionShareServer {
                 session.guacdSocket.write('5.video;');
                 session.guacdSocket.write('5.image;');
                 
+                // args 参数在 opcode 中，不在参数列表中
+                // 需要手动添加 args 参数
+                paramNames.unshift('args');
+                
                 // 构建连接参数值
                 const paramValues = paramNames.map(name => {
                     const p = session.params;

@@ -106,6 +106,14 @@ class SessionShareServer {
         if (session.handshakeComplete) {
             console.log(`[SessionShare v3] 新客户端加入已连接的会话`);
             
+            // 重放最近的关键指令
+            if (session.recentFrames && session.recentFrames.length > 0) {
+                console.log(`[SessionShare v3] 重放 ${session.recentFrames.length} 条关键指令`);
+                for (const frame of session.recentFrames) {
+                    this.sendToClient(clientId, frame);
+                }
+            }
+            
             // 发送 session-status 消息
             this.sendToClient(clientId, {
                 type: 'session-status',
@@ -248,8 +256,19 @@ class SessionShareServer {
             }
         } else {
             // 连接已就绪，直接转发
-            console.log(`[SessionShare v3] 转发 ${data.length} bytes`);
             this.broadcastToSession(sessionKey, data);
+            
+            // 存储最近的关键帧指令（用于新客户端同步）
+            // 只存储 img、png、cpy、size、mouse、cursor、sync 等关键指令
+            const dataStr = data.toString();
+            if (dataStr.includes('img') || dataStr.includes('png') || dataStr.includes('size') || 
+                dataStr.includes('sync') || dataStr.includes('cursor') || dataStr.includes('mouse')) {
+                if (!session.recentFrames) session.recentFrames = [];
+                session.recentFrames.push(dataStr);
+                if (session.recentFrames.length > 50) {
+                    session.recentFrames.shift();
+                }
+            }
         }
     }
 

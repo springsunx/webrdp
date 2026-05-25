@@ -102,9 +102,16 @@ class SessionShareServer {
             this.connectToGuacd(sessionKey);
         }
         
-        // 如果会话已连接，通知新客户端（模拟 ready 指令）
+        // 如果会话已连接，通知新客户端
         if (session.handshakeComplete) {
             console.log(`[SessionShare v3] 新客户端加入已连接的会话`);
+            // 发送初始化指令（size, audio, video, image）
+            const sizeCmd = `4.size,${String(session.width).length}.${session.width},${String(session.height).length}.${session.height},2.96`;
+            this.sendToClient(clientId, sizeCmd + ';');
+            this.sendToClient(clientId, '5.audio;');
+            this.sendToClient(clientId, '5.video;');
+            this.sendToClient(clientId, '5.image;');
+            
             // 发送 session-status 消息
             this.sendToClient(clientId, {
                 type: 'session-status',

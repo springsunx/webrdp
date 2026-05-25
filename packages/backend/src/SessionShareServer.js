@@ -86,15 +86,13 @@ class SessionShareServer {
         if (session.handshakeComplete) {
             console.log(`[SessionShare v3] 新客户端加入`);
             
-            // 先发送 size 指令创建画布，再发送最近的数据
+            // 发送 size 指令创建画布
             if (session.sizeCmd) {
                 ws.send(session.sizeCmd);
             }
-            if (session.recentData.length > 0) {
-                const all = session.recentData.join('');
-                console.log(`[SessionShare v3] 重放 ${all.length} bytes`);
-                ws.send(all);
-            }
+            
+            // 不重放历史数据，让客户端接收当前画面
+            // 当 guacd 发送新数据时，所有客户端都会收到
             
             ws.send(JSON.stringify({
                 type: 'session-status', sessionKey,

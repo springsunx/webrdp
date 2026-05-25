@@ -91,8 +91,12 @@ class SessionShareServer {
                 ws.send(session.sizeCmd);
             }
             
-            // 不重放历史数据，让客户端接收当前画面
-            // 当 guacd 发送新数据时，所有客户端都会收到
+            // 重放最近的画面数据
+            if (session.recentData.length > 0) {
+                const all = session.recentData.join('');
+                console.log(`[SessionShare v3] 重放 ${all.length} bytes`);
+                ws.send(all);
+            }
             
             ws.send(JSON.stringify({
                 type: 'session-status', sessionKey,

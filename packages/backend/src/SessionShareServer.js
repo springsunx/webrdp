@@ -703,6 +703,11 @@ class SessionShareServer {
 
             // 返回完整的指令（从开始到分号）
             const instruction = buffer.substring(instructionStart, pos);
+            
+            // 验证指令格式
+            if (!instruction.endsWith(';')) {
+                console.error(`[SessionShare] 指令格式错误，缺少分号: ${instruction}`);
+            }
 
             return { opcode, args, instruction, remaining: buffer.substring(pos) };
         } catch (e) {

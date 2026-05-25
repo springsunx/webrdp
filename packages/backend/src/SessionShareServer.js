@@ -101,6 +101,20 @@ class SessionShareServer {
         if (this.clients.get(clientId).mode === 'controller' && !session.guacdSocket) {
             this.connectToGuacd(sessionKey);
         }
+        
+        // 如果会话已连接，通知新客户端（模拟 ready 指令）
+        if (session.handshakeComplete) {
+            console.log(`[SessionShare v3] 新客户端加入已连接的会话`);
+            // 发送 session-status 消息
+            this.sendToClient(clientId, {
+                type: 'session-status',
+                sessionKey: sessionKey,
+                mode: this.clients.get(clientId).mode,
+                controllerId: session.controllerId,
+                clientCount: session.clients.size,
+                state: 'connected'
+            });
+        }
 
         this.notifyClientStatus(clientId);
 
@@ -188,8 +202,10 @@ class SessionShareServer {
                     if (pos < argsRaw.length && argsRaw[pos] === ',') pos++;
                 }
                 
-                // 发送 size/audio/video/image
-                session.guacdSocket.write('4.size,3.800,3.600,2.96;');
+                // 发送 size/audio/video/image（使用会话的 width/height）
+                const sizeCmd = `4.size,${String(session.width).length}.${session.width},${String(session.height).length}.${session.height},2.96`;
+                console.log(`[SessionShare v3] 发送 size: ${sizeCmd}`);
+                session.guacdSocket.write(sizeCmd + ';');
                 session.guacdSocket.write('5.audio;');
                 session.guacdSocket.write('5.video;');
                 session.guacdSocket.write('5.image;');

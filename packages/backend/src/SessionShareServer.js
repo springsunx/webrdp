@@ -649,12 +649,9 @@ class SessionShareServer {
      * 构建指令字符串
      */
     buildInstruction(opcode, args) {
-        let instruction = `${opcode.length}.${opcode}`;
-        for (const arg of args) {
-            instruction += `,${arg.length}.${arg}`;
-        }
-        instruction += ';';
-        return instruction;
+        // args 已经包含了格式化的参数（如 "5.ready"）
+        // 直接连接它们
+        return args.join(',') + ';';
     }
 
     /**

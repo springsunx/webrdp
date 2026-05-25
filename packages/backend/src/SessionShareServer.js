@@ -106,11 +106,12 @@ class SessionShareServer {
         if (session.handshakeComplete) {
             console.log(`[SessionShare v3] 新客户端加入已连接的会话`);
             
-            // 重放最近的关键指令
-            if (session.recentFrames && session.recentFrames.length > 0) {
-                console.log(`[SessionShare v3] 重放 ${session.recentFrames.length} 条关键指令`);
-                for (const frame of session.recentFrames) {
-                    this.sendToClient(clientId, frame);
+            // 重放最近的数据（用于初始化画面）
+            if (session.recentData && session.recentData.length > 0) {
+                const totalSize = session.recentData.join('').length;
+                console.log(`[SessionShare v3] 重放 ${session.recentData.length} 条指令, 共 ${totalSize} bytes`);
+                for (const data of session.recentData) {
+                    this.sendToClient(clientId, data);
                 }
             }
             
@@ -260,16 +261,13 @@ class SessionShareServer {
             // 连接已就绪，直接转发
             this.broadcastToSession(sessionKey, data);
             
-            // 存储最近的关键帧指令（用于新客户端同步）
-            // 只存储 img、png、cpy、size、mouse、cursor、sync 等关键指令
-            const dataStr = data.toString();
-            if (dataStr.includes('img') || dataStr.includes('png') || dataStr.includes('size') || 
-                dataStr.includes('sync') || dataStr.includes('cursor') || dataStr.includes('mouse')) {
-                if (!session.recentFrames) session.recentFrames = [];
-                session.recentFrames.push(dataStr);
-                if (session.recentFrames.length > 50) {
-                    session.recentFrames.shift();
-                }
+            // 存储最近的数据（用于新客户端同步）
+            // 存储所有数据，保持完整的画面状态
+            if (!session.recentData) session.recentData = [];
+            session.recentData.push(data.toString());
+            // 保留最近 200KB 的数据
+            while (session.recentData.join('').length > 200000) {
+                session.recentData.shift();
             }
         }
     }

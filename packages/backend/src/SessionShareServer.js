@@ -674,11 +674,13 @@ class SessionShareServer {
 
             // 读取 opcode
             const opcode = buffer.substring(pos, pos + opcodeLen);
+            const opcodeStart = pos - opcodeLen.toString().length - 1;  // opcode 的起始位置（包括长度前缀）
             pos += opcodeLen;
 
-            // 读取参数（包括 opcode 作为第一个参数）
-            const args = [`${opcodeLen}.${opcode}`];
+            // 读取参数（保留格式化的参数）
+            const args = [buffer.substring(opcodeStart, pos)];
             while (pos < buffer.length && buffer[pos] === ',') {
+                const argStart = pos;  // 记录参数起始位置（包括逗号）
                 pos++;
 
                 const argLenEnd = buffer.indexOf('.', pos);
@@ -689,7 +691,8 @@ class SessionShareServer {
 
                 if (buffer.length < pos + argLen + 1) return null;
 
-                args.push(buffer.substring(pos, pos + argLen));
+                // 保留格式化的参数（包括长度前缀）
+                args.push(buffer.substring(argStart + 1, pos + argLen));
                 pos += argLen;
             }
 

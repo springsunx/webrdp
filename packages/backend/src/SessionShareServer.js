@@ -65,8 +65,9 @@ class SessionShareServer {
         const url = new URL(req.url, `http://${req.headers.host}`);
         const clientId = url.searchParams.get('clientId') || this.generateId();
         const token = url.searchParams.get('token');
-        const width = url.searchParams.get('width') || '1024';
-        const height = url.searchParams.get('height') || '768';
+        // 清理 width 和 height，移除可能的非数字字符
+        const width = (url.searchParams.get('width') || '1024').replace(/[^0-9]/g, '') || '1024';
+        const height = (url.searchParams.get('height') || '768').replace(/[^0-9]/g, '') || '768';
 
         if (!token) {
             ws.close(4001, 'Missing token');

@@ -539,18 +539,20 @@ class SessionShareServer {
         let sentCount = 0;
         for (const clientId of session.clients) {
             const client = this.clients.get(clientId);
-            if (client && client.ws.readyState === WebSocket.OPEN) {
+            if (client && client.ws && client.ws.readyState === WebSocket.OPEN) {
                 try {
                     client.ws.send(message);
                     sentCount++;
                 } catch (e) {
                     console.error(`[SessionShare] 发送给 ${clientId} 失败:`, e.message);
                 }
+            } else {
+                console.log(`[SessionShare] 客户端 ${clientId} 状态: ${client?.ws?.readyState}`);
             }
         }
         
-        if (sentCount > 0) {
-            console.log(`[SessionShare] 广播给 ${sentCount} 个客户端`);
+        if (sentCount > 0 && typeof data === 'string') {
+            console.log(`[SessionShare] 广播给 ${sentCount} 个客户端，数据长度: ${data.length}`);
         }
     }
 

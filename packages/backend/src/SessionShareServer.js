@@ -27,9 +27,10 @@ class SessionShareServer {
         // 客户端 Map: clientId -> ClientInfo
         this.clients = new Map();
         
-        // WebSocket 服务器
+        // WebSocket 服务器（禁用压缩）
         this.wss = new WebSocket.Server({ 
-            noServer: true
+            noServer: true,
+            perMessageDeflate: false
         });
         
         this.setupWebSocket();

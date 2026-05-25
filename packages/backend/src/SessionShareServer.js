@@ -292,6 +292,10 @@ class SessionShareServer {
                     // 获取对应的值
                     let value = null;
                     switch (paramName) {
+                        case 'args':
+                            // 重要：args 参数必须返回 'connect'
+                            value = 'connect';
+                            break;
                         case 'hostname':
                             value = session.params.hostname;
                             break;
@@ -320,7 +324,7 @@ class SessionShareServer {
                             value = session.params['ignore-cert'] || 'true';
                             break;
                         default:
-                            // 对于未知参数（如 VERSION_1_5_0、timeout、domain 等），返回 null
+                            // 对于未知参数，返回 null
                             value = null;
                     }
                     connectionOptions.push(value);

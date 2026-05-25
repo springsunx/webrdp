@@ -231,6 +231,7 @@ class SessionShareServer {
             }
         } else {
             // 连接已就绪，直接转发
+            console.log(`[SessionShare v3] 转发 ${data.length} bytes`);
             this.broadcastToSession(sessionKey, data);
         }
     }

@@ -175,9 +175,9 @@ class SessionShareServer {
                 const w = session.params.width || session.width || '1024';
                 const h = session.params.height || session.height || '768';
                 session.guacdSocket.write(`4.size,${w.length}.${w},${h.length}.${h},2.96;`);
-                session.guacdSocket.write('5.audio,10.audio/L16;');
+                session.guacdSocket.write('5.audio;');
                 session.guacdSocket.write('5.video;');
-                session.guacdSocket.write('5.image,9.image/png,10.image/jpeg;');
+                session.guacdSocket.write('5.image;');
 
                 // 构建连接参数
                 names.unshift('args');

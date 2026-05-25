@@ -329,7 +329,8 @@ class SessionShareServer {
                         default:
                             value = null;
                     }
-                    connectionOptions.push(value);
+                    // 确保值不为 undefined
+                    connectionOptions.push(value !== undefined ? value : null);
                 });
                 
                 // 发送连接参数
@@ -600,8 +601,11 @@ class SessionShareServer {
      */
     formatOpCode(opCodeParts) {
         return opCodeParts.map(part => {
-            part = part === null ? '' : String(part);
-            return `${part.length}.${part}`;
+            // 处理 null、undefined 和空字符串
+            if (part === null || part === undefined) {
+                part = '';
+            }
+            return String(part).length + '.' + String(part);
         }).join(',') + ';';
     }
 

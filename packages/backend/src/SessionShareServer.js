@@ -174,12 +174,16 @@ class SessionShareServer {
             console.log(`[SessionShare] guacd 连接成功`);
             session.guacdSocket = socket;
             session.state = 'connecting';
+            session.buffer = '';
             
-            // 开始 Guacamole 握手
-            this.sendGuacInstruction(socket, 'select', 'rdp');
+            // 开始 Guacamole 握手 - 发送 select 指令
+            const selectCmd = '7.select,3.rdp;';
+            console.log(`[SessionShare] 发送 select 指令: ${selectCmd}`);
+            socket.write(selectCmd);
         });
 
         socket.on('data', (data) => {
+            console.log(`[SessionShare] 收到 guacd 数据: ${data.substring(0, 100)}...`);
             this.handleGuacdData(sessionKey, data);
         });
 
@@ -209,11 +213,17 @@ class SessionShareServer {
         session.buffer += data;
         session.lastActivity = Date.now();
 
+        console.log(`[SessionShare] 当前缓冲区长度: ${session.buffer.length}`);
+
         // 解析并处理指令
         while (true) {
             const result = this.parseInstruction(session.buffer);
-            if (!result) break;
+            if (!result) {
+                console.log(`[SessionShare] 无法解析更多指令，剩余缓冲区: ${session.buffer.length}`);
+                break;
+            }
 
+            console.log(`[SessionShare] 解析到指令: ${result.opcode}, 参数: ${JSON.stringify(result.args)}`);
             session.buffer = result.remaining;
             
             // 处理握手相关的指令
@@ -222,6 +232,7 @@ class SessionShareServer {
             // 广播给所有客户端（除了 args 指令，因为它是内部处理的）
             if (result.opcode !== 'args') {
                 const instruction = this.buildInstruction(result.opcode, result.args);
+                console.log(`[SessionShare] 广播指令: ${instruction.substring(0, 100)}...`);
                 this.broadcastToSession(sessionKey, instruction);
             }
         }
@@ -438,17 +449,25 @@ class SessionShareServer {
         const session = this.sessions.get(sessionKey);
         if (!session) return;
 
+        // 如果数据是对象类型（如 JSON 消息），直接发送
+        // 如果是字符串类型（Guacamole 指令），也直接发送
         const message = typeof data === 'string' ? data : JSON.stringify(data);
 
+        let sentCount = 0;
         for (const clientId of session.clients) {
             const client = this.clients.get(clientId);
             if (client && client.ws.readyState === WebSocket.OPEN) {
                 try {
                     client.ws.send(message);
+                    sentCount++;
                 } catch (e) {
-                    console.error(`[SessionShare] 发送失败:`, e.message);
+                    console.error(`[SessionShare] 发送给 ${clientId} 失败:`, e.message);
                 }
             }
+        }
+        
+        if (sentCount > 0) {
+            console.log(`[SessionShare] 广播给 ${sentCount} 个客户端`);
         }
     }
 

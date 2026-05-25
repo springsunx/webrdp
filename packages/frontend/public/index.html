@@ -238,6 +238,47 @@
             cursor: not-allowed;
         }
         
+        /* 模式指示器 */
+        .mode-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 8px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 500;
+        }
+        
+        .mode-indicator.viewer {
+            background-color: #6b7280;
+            color: #fff;
+        }
+        
+        .mode-indicator.controller {
+            background-color: #10b981;
+            color: #fff;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        .control-btn {
+            background-color: #f59e0b !important;
+            color: #000 !important;
+        }
+        
+        .control-btn:hover {
+            background-color: #d97706 !important;
+        }
+        
+        .control-btn.active {
+            background-color: #ef4444 !important;
+            color: #fff !important;
+        }
+        
         .rdp-container {
             flex: 1;
             display: flex;
@@ -626,6 +667,11 @@
             <h1 id="desktop-title">WebRDP</h1>
             <div class="controls">
                 <span id="status" class="status disconnected">Disconnected</span>
+                <span id="mode-indicator" class="mode-indicator viewer">
+                    <span id="mode-icon">👁</span>
+                    <span id="mode-text">观看</span>
+                </span>
+                <button id="control-btn" class="control-btn">请求主控</button>
                 <button id="disconnect-btn">断开</button>
                 <button id="reconnect-btn">重连</button>
                 <button id="fullscreen-btn">全屏</button>

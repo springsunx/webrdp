@@ -177,10 +177,31 @@ class SessionShareServer {
             session.state = 'connecting';
             session.buffer = '';
             
-            // 开始 Guacamole 握手 - 发送 select 指令
-            const selectCmd = '7.select,3.rdp;';
-            console.log(`[SessionShare] 发送 select 指令: ${selectCmd}`);
+            // 开始 Guacamole 握手 - 按照 guacamole-lite 的流程发送指令
+            // 1. 选择协议
+            const selectCmd = this.formatOpCode(['select', 'rdp']);
+            console.log(`[SessionShare] 发送 select: ${selectCmd}`);
             socket.write(selectCmd);
+            
+            // 2. 设置大小
+            const sizeCmd = this.formatOpCode(['size', session.width, session.height, '96']);
+            console.log(`[SessionShare] 发送 size: ${sizeCmd}`);
+            socket.write(sizeCmd);
+            
+            // 3. 音频支持
+            const audioCmd = this.formatOpCode(['audio']);
+            console.log(`[SessionShare] 发送 audio: ${audioCmd}`);
+            socket.write(audioCmd);
+            
+            // 4. 视频支持
+            const videoCmd = this.formatOpCode(['video']);
+            console.log(`[SessionShare] 发送 video: ${videoCmd}`);
+            socket.write(videoCmd);
+            
+            // 5. 图像支持
+            const imageCmd = this.formatOpCode(['image']);
+            console.log(`[SessionShare] 发送 image: ${imageCmd}`);
+            socket.write(imageCmd);
         });
 
         socket.on('data', (data) => {
@@ -252,21 +273,59 @@ class SessionShareServer {
         const session = this.sessions.get(sessionKey);
         if (!session) return;
 
-        console.log(`[SessionShare] 握手: ${opcode}`);
+        console.log(`[SessionShare] 握手: ${opcode}, args: ${JSON.stringify(args)}`);
 
         switch (opcode) {
             case 'args':
                 // guacd 请求连接参数
-                this.sendGuacInstruction(session.guacdSocket, '',
-                    session.params.hostname,
-                    session.params.port || '3389',
-                    session.width,
-                    session.height,
-                    session.params.dpi || '96',
-                    session.params['ignore-cert'] || 'true',
-                    session.params.username,
-                    session.params.password
-                );
+                // args 中包含请求的参数名称，需要解析并返回对应的值
+                const connectionOptions = [];
+                
+                args.forEach((arg) => {
+                    // 解析参数名称（如 "4.hostname" -> "hostname"）
+                    const parts = arg.split('.');
+                    const paramName = parts.length > 1 ? parts[1] : parts[0];
+                    
+                    // 获取对应的值
+                    let value = null;
+                    switch (paramName) {
+                        case 'hostname':
+                            value = session.params.hostname;
+                            break;
+                        case 'port':
+                            value = session.params.port || '3389';
+                            break;
+                        case 'username':
+                            value = session.params.username;
+                            break;
+                        case 'password':
+                            value = session.params.password;
+                            break;
+                        case 'width':
+                            value = session.width;
+                            break;
+                        case 'height':
+                            value = session.height;
+                            break;
+                        case 'dpi':
+                            value = session.params.dpi || '96';
+                            break;
+                        case 'security':
+                            value = session.params.security || 'any';
+                            break;
+                        case 'ignore-cert':
+                            value = session.params['ignore-cert'] || 'true';
+                            break;
+                        default:
+                            value = '';
+                    }
+                    connectionOptions.push(value);
+                });
+                
+                // 发送连接参数
+                const argsCmd = this.formatOpCode(connectionOptions);
+                console.log(`[SessionShare] 发送连接参数: ${argsCmd.substring(0, 100)}...`);
+                session.guacdSocket.write(argsCmd);
                 break;
 
             case 'ready':
@@ -524,6 +583,16 @@ class SessionShareServer {
             this.sessions.delete(sessionKey);
             console.log(`[SessionShare] 关闭会话: ${sessionKey}`);
         }
+    }
+
+    /**
+     * 格式化 Guacamole 指令（参考 guacamole-lite）
+     */
+    formatOpCode(opCodeParts) {
+        return opCodeParts.map(part => {
+            part = part === null ? '' : String(part);
+            return `${part.length}.${part}`;
+        }).join(',') + ';';
     }
 
     /**

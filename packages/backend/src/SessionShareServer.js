@@ -27,16 +27,9 @@ class SessionShareServer {
         // 客户端 Map: clientId -> ClientInfo
         this.clients = new Map();
         
-        // WebSocket 服务器（支持 guacamole 子协议）
+        // WebSocket 服务器
         this.wss = new WebSocket.Server({ 
-            noServer: true,
-            handleProtocols: (protocols) => {
-                // 支持 guacamole 子协议
-                if (protocols.has('guacamole')) {
-                    return 'guacamole';
-                }
-                return false;
-            }
+            noServer: true
         });
         
         this.setupWebSocket();

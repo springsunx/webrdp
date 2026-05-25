@@ -5,6 +5,9 @@ const path = require('path');
 const crypto = require('crypto');
 const cors = require('cors');
 
+// 会话共享组件
+const SessionShareServer = require('./SessionShareServer');
+
 // 配置
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const GUACD_HOST = process.env.GUACD_HOST || 'localhost';
@@ -120,6 +123,62 @@ app.get('/api/rdp/connect', (req, res) => {
   }
 });
 
+// 会话状态 API
+app.get('/api/session/status', (req, res) => {
+  const { session, clientId } = req.query;
+  if (!session || !clientId) {
+    return res.status(400).json({ error: '缺少参数' });
+  }
+
+  const sessionData = sessionShareServer.sessions.get(session);
+  const clientData = sessionShareServer.clients.get(clientId);
+
+  res.json({
+    exists: !!sessionData,
+    mode: clientData?.mode || 'viewer',
+    controllerId: sessionData?.controllerId,
+    clientCount: sessionData?.clients?.size || 0,
+    state: sessionData?.state || 'pending'
+  });
+});
+
+// 请求/释放主控
+app.post('/api/session/control', (req, res) => {
+  const { session, clientId, action } = req.body;
+  if (!session || !clientId || !action) {
+    return res.status(400).json({ error: '缺少参数' });
+  }
+
+  if (action === 'request') {
+    sessionShareServer.requestControl(clientId);
+  } else if (action === 'release') {
+    sessionShareServer.releaseControl(clientId);
+  }
+
+  const sessionData = sessionShareServer.sessions.get(session);
+  res.json({
+    success: true,
+    controllerId: sessionData?.controllerId
+  });
+});
+
+// 心跳
+app.post('/api/session/heartbeat', (req, res) => {
+  const { session, clientId } = req.body;
+  if (session && clientId) {
+    const sessionData = sessionShareServer.sessions.get(session);
+    if (sessionData) {
+      sessionData.lastActivity = Date.now();
+    }
+  }
+  res.json({ success: true });
+});
+
+// 统计信息
+app.get('/api/session/stats', (req, res) => {
+  res.json(sessionShareServer.getStats());
+});
+
 // 默认路由 - 返回前端页面
 app.get('*', (req, res) => {
   res.sendFile(path.join(publicPath, 'index.html'));
@@ -141,23 +200,9 @@ const clientOptions = {
   },
 };
 
-// 初始化 Guacamole Lite 服务器 - 使用 httpServer 参数
-try {
-  console.log(`[WebRDP] 初始化 GuacamoleLite: Guacd=${guacdOptions.host}:${guacdOptions.port}`);
-  const guacServer = new GuacamoleLite({ server }, guacdOptions, clientOptions);
-  console.log('[WebRDP] GuacamoleLite 初始化成功。');
-
-  guacServer.on('error', (error) => {
-    console.error('[WebRDP] GuacamoleLite 服务器错误:', error);
-  });
-
-  guacServer.on('connection', (client) => {
-    console.log(`[WebRDP] 新连接: 客户端 ID=${client.id}`);
-  });
-} catch (error) {
-  console.error('[WebRDP] 初始化 GuacamoleLite 失败:', error);
-  process.exit(1);
-}
+// 初始化会话共享服务器
+const sessionShareServer = new SessionShareServer(server, guacdOptions);
+console.log('[WebRDP] 会话共享服务器初始化成功');
 
 // 启动 HTTP 服务器
 server.listen(PORT, () => {

@@ -9,28 +9,32 @@ class WebRDPLite {
         this.backendUrl = this.getBackendUrl();
         this.storageKey = 'webrdp-params';
         
+        // 会话共享相关
+        this.clientId = this.generateId();
+        this.sessionKey = null;
+        this.sessionMode = 'viewer';
+        this.controllerId = null;
+        this.sessionWs = null;
+        
         this.initElements();
         this.initEventListeners();
         this.checkUrlParams();
     }
     
+    // 生成唯一 ID
+    generateId() {
+        return 'client_' + Math.random().toString(36).substr(2, 12);
+    }
+    
     // 获取后端URL
     getBackendUrl() {
-        // 合并部署时，后端和前端在同一端口
         return `${window.location.protocol}//${window.location.host}`;
     }
     
     // 获取WebSocket URL
     getWebSocketUrl() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const host = window.location.hostname;
-        const port = window.location.port;
-        
-        // 如果是标准端口（80/443），不带端口；否则带端口
-        if (port && port !== '80' && port !== '443') {
-            return `${protocol}//${host}:${port}`;
-        }
-        return `${protocol}//${host}`;
+        return `${protocol}//${window.location.host}`;
     }
     
     // 初始化DOM元素
@@ -66,6 +70,9 @@ class WebRDPLite {
         this.footerWidth = document.getElementById('footer-width');
         this.footerHeight = document.getElementById('footer-height');
         this.resizeBtn = document.getElementById('resize-btn');
+        
+        // 会话共享元素
+        this.controlBtn = document.getElementById('control-btn');
     }
     
     // 初始化事件监听器
@@ -82,6 +89,11 @@ class WebRDPLite {
         this.fullscreenBtn.addEventListener('click', () => this.toggleFullscreen());
         this.backBtn.addEventListener('click', () => this.showLogin());
         this.resizeBtn.addEventListener('click', () => this.resizeDisplay());
+        
+        // 主控按钮
+        if (this.controlBtn) {
+            this.controlBtn.addEventListener('click', () => this.toggleControl());
+        }
         
         // 键盘事件
         document.addEventListener('keydown', (e) => this.handleKeyDown(e));
@@ -395,9 +407,14 @@ class WebRDPLite {
                 throw new Error('Failed to get connection token');
             }
             
-            // 创建WebSocket隧道
+            // 生成会话标识
+            this.sessionKey = `${this.connectionParams.host}:${this.connectionParams.port}:${this.connectionParams.user}`;
+            
+            // 创建WebSocket隧道 - 使用新的会话共享端点
             const wsBase = this.getWebSocketUrl();
-            const tunnelUrl = `${wsBase}?token=${encodeURIComponent(token)}&width=${this.connectionParams.width}&height=${this.connectionParams.height}`;
+            const tunnelUrl = `${wsBase}/ws/session?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(this.clientId)}&width=${this.connectionParams.width}&height=${this.connectionParams.height}`;
+            
+            console.log('[WebRDP] 连接到:', tunnelUrl);
             
             // @ts-ignore
             const tunnel = new Guacamole.WebSocketTunnel(tunnelUrl);
@@ -438,6 +455,9 @@ class WebRDPLite {
             
             // 设置输入监听
             this.setupInputListeners();
+            
+            // 启动会话轮询
+            this.startSessionPolling();
             
         } catch (error) {
             console.error('Connection failed:', error);
@@ -836,6 +856,179 @@ class WebRDPLite {
         } else {
             document.exitFullscreen();
         }
+    }
+    
+    // 启动会话轮询
+    startSessionPolling() {
+        this.stopSessionPolling();
+        
+        // 立即获取状态
+        this.pollSessionStatus();
+        
+        // 每3秒轮询
+        this.sessionPollInterval = setInterval(() => {
+            this.pollSessionStatus();
+        }, 3000);
+        
+        // 每30秒心跳
+        this.heartbeatInterval = setInterval(() => {
+            this.sendHeartbeat();
+        }, 30000);
+    }
+    
+    // 停止会话轮询
+    stopSessionPolling() {
+        if (this.sessionPollInterval) {
+            clearInterval(this.sessionPollInterval);
+            this.sessionPollInterval = null;
+        }
+        if (this.heartbeatInterval) {
+            clearInterval(this.heartbeatInterval);
+            this.heartbeatInterval = null;
+        }
+    }
+    
+    // 轮询会话状态
+    async pollSessionStatus() {
+        if (!this.sessionKey || !this.clientId) return;
+        
+        try {
+            const response = await fetch(`${this.backendUrl}/api/session/status?session=${encodeURIComponent(this.sessionKey)}&clientId=${encodeURIComponent(this.clientId)}`);
+            const data = await response.json();
+            
+            if (data.exists) {
+                const newMode = data.controllerId === this.clientId ? 'controller' : 'viewer';
+                if (newMode !== this.sessionMode || data.controllerId !== this.controllerId) {
+                    this.updateModeDisplay(newMode, data.controllerId);
+                }
+            }
+        } catch (e) {
+            console.error('[Session] 轮询状态失败:', e);
+        }
+    }
+    
+    // 发送心跳
+    async sendHeartbeat() {
+        if (!this.sessionKey || !this.clientId) return;
+        
+        try {
+            await fetch(`${this.backendUrl}/api/session/heartbeat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session: this.sessionKey,
+                    clientId: this.clientId
+                })
+            });
+        } catch (e) {
+            console.error('[Session] 心跳失败:', e);
+        }
+    }
+    
+    // 更新模式显示
+    updateModeDisplay(mode, controllerId = null) {
+        this.sessionMode = mode;
+        this.controllerId = controllerId;
+        
+        const modeIndicator = document.getElementById('mode-indicator');
+        const modeIcon = document.getElementById('mode-icon');
+        const modeText = document.getElementById('mode-text');
+        const controlBtn = document.getElementById('control-btn');
+        
+        if (!modeIndicator || !controlBtn) return;
+        
+        if (mode === 'controller') {
+            modeIndicator.className = 'mode-indicator controller';
+            if (modeIcon) modeIcon.textContent = '🎮';
+            if (modeText) modeText.textContent = '主控';
+            controlBtn.textContent = '释放主控';
+            controlBtn.classList.add('active');
+        } else {
+            modeIndicator.className = 'mode-indicator viewer';
+            if (modeIcon) modeIcon.textContent = '👁';
+            if (modeText) modeText.textContent = '观看';
+            controlBtn.textContent = '请求主控';
+            controlBtn.classList.remove('active');
+        }
+        
+        console.log(`[Session] 模式更新: ${mode}`);
+    }
+    
+    // 切换主控模式
+    async toggleControl() {
+        if (this.sessionMode === 'controller') {
+            await this.releaseControl();
+        } else {
+            await this.requestControl();
+        }
+    }
+    
+    // 请求主控权
+    async requestControl() {
+        if (!this.sessionKey || !this.clientId) return;
+        
+        try {
+            await fetch(`${this.backendUrl}/api/session/control`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session: this.sessionKey,
+                    clientId: this.clientId,
+                    action: 'request'
+                })
+            });
+            
+            this.pollSessionStatus();
+        } catch (e) {
+            console.error('[Session] 请求主控权失败:', e);
+        }
+    }
+    
+    // 释放主控权
+    async releaseControl() {
+        if (!this.sessionKey || !this.clientId) return;
+        
+        try {
+            await fetch(`${this.backendUrl}/api/session/control`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session: this.sessionKey,
+                    clientId: this.clientId,
+                    action: 'release'
+                })
+            });
+            
+            this.pollSessionStatus();
+        } catch (e) {
+            console.error('[Session] 释放主控权失败:', e);
+        }
+    }
+    
+    // 断开连接
+    disconnect() {
+        this.stopSessionPolling();
+        
+        if (this.guacClient) {
+            this.guacClient.disconnect();
+            this.guacClient = null;
+        }
+        
+        // 清理显示
+        while (this.rdpDisplay.firstChild) {
+            this.rdpDisplay.removeChild(this.rdpDisplay.firstChild);
+        }
+        
+        // 重新添加加载动画
+        this.rdpDisplay.appendChild(this.loadingElement);
+        this.loadingElement.style.display = 'none';
+        
+        // 重置状态
+        this.sessionKey = null;
+        this.sessionMode = 'viewer';
+        this.controllerId = null;
+        
+        this.updateStatus('disconnected', '已断开');
     }
 }
 

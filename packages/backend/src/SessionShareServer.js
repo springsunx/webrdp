@@ -33,7 +33,24 @@ class SessionShareServer {
             });
         });
 
-        this.wss.on('connection', (ws, req) => this.handleConnection(ws, req));
+        // 添加 WebSocket 保活机制
+        this.wss.on('connection', (ws, req) => {
+            ws.isAlive = true;
+            ws.on('pong', () => { ws.isAlive = true; });
+            this.handleConnection(ws, req);
+        });
+        
+        // 每 30 秒检查连接状态
+        this._pingInterval = setInterval(() => {
+            this.wss.clients.forEach(ws => {
+                if (ws.isAlive === false) {
+                    ws.terminate();
+                    return;
+                }
+                ws.isAlive = false;
+                ws.ping();
+            });
+        }, 30000);
     }
 
     handleConnection(ws, req) {

@@ -132,17 +132,28 @@ class SessionShareServer {
             session.handshakeComplete = false;
             session.recentData = [];
             socket.write('6.select,3.rdp;');
+            
+            // 添加心跳定时器，每 10 秒发送 nop 保持连接活跃
+            clearInterval(session._heartbeat);
+            session._heartbeat = setInterval(() => {
+                if (session.guacdSocket && !session.guacdSocket.destroyed && session.handshakeComplete) {
+                    session.guacdSocket.write('3.nop;');
+                    console.log(`[SessionShare v3] 发送心跳 nop`);
+                }
+            }, 10000);
         });
 
         socket.on('data', (data) => this.handleGuacdData(sessionKey, data));
 
         socket.on('close', () => {
+            clearInterval(session._heartbeat);
             session.guacdSocket = null;
             session.state = 'disconnected';
             this.broadcastJson(sessionKey, { type: 'session-state', state: 'disconnected' });
         });
 
         socket.on('error', (error) => {
+            clearInterval(session._heartbeat);
             session.guacdSocket = null;
             this.broadcastJson(sessionKey, { type: 'error', message: error.message });
         });

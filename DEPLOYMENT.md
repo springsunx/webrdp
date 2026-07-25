@@ -36,9 +36,9 @@ cd webrdp
 docker-compose up -d
 ```
 
-3. **访问应用**
+3. **访问应用（URL 只预填非敏感参数，密码在页面输入）**
 ```
-http://localhost:3000?host=YOUR_RDP_HOST&port=3389&user=YOUR_USER&password=YOUR_PASSWORD
+http://localhost:3000?host=YOUR_RDP_HOST&port=3389&user=YOUR_USER
 ```
 
 ### 方法二：本地开发
@@ -56,7 +56,7 @@ npm install
 
 2. **启动 Guacd**
 ```bash
-docker run -d --name guacd -p 4822:4822 guacamole/guacd:latest
+docker run -d --name guacd -p 4822:4822 guacamole/guacd:1.6.0
 ```
 
 3. **启动后端**
@@ -96,13 +96,12 @@ FRONTEND_URL=http://localhost:3000  # 前端 URL
 | `host` | ✅ | - | 远程主机 IP 或域名 |
 | `port` | ❌ | 3389 | RDP 端口 |
 | `user` | ✅ | - | 用户名 |
-| `password` | ✅ | - | 密码 |
 | `width` | ❌ | 1024 | 屏幕宽度 |
 | `height` | ❌ | 768 | 屏幕高度 |
 
 **示例 URL**：
 ```
-http://localhost:3000?host=192.168.1.100&port=3389&user=admin&password=secret&width=1920&height=1080
+http://localhost:3000?host=192.168.1.100&port=3389&user=admin&width=1920&height=1080
 ```
 
 ## 与反向代理集成

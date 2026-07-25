@@ -1,17 +1,11 @@
 services:
-  # Guacd - Apache Guacamole 守护进程
   guacd:
-    image: guacamole/guacd:latest
+    image: guacamole/guacd:1.6.0
     container_name: webrdp-guacd
     restart: unless-stopped
-    ports:
-      - "4822:4822"
-    volumes:
-      - guacd-data:/var/lib/guacamole
     networks:
       - webrdp-network
 
-  # WebRDP - 合并后的前端+后端服务
   app:
     build:
       context: .
@@ -19,18 +13,19 @@ services:
     container_name: webrdp-app
     restart: unless-stopped
     ports:
-      - "3000:3000"    # HTTP + 静态文件 + WebSocket
+      - "3000:3000"
     environment:
-      - GUACD_HOST=guacd
-      - GUACD_PORT=4822
-      - PORT=3000
+      GUACD_HOST: guacd
+      GUACD_PORT: 4822
+      PORT: 3000
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-}
+      SESSION_TTL_MS: ${SESSION_TTL_MS:-28800000}
+      JOIN_TOKEN_TTL_MS: ${JOIN_TOKEN_TTL_MS:-60000}
+      MAX_VIEWERS: ${MAX_VIEWERS:-20}
     depends_on:
       - guacd
     networks:
       - webrdp-network
-
-volumes:
-  guacd-data:
 
 networks:
   webrdp-network:

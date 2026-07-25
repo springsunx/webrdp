@@ -37,3 +37,6 @@ coverage/
 # 编译产物
 *.pyc
 __pycache__/
+
+# Reasonix AI 配置目录
+.reasonix/

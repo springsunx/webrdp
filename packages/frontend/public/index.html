@@ -565,6 +565,72 @@
                 padding: 0;
             }
         }
+
+        .share-bar {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: #172554;
+            border-bottom: 1px solid #1d4ed8;
+            flex-shrink: 0;
+        }
+
+        .share-bar strong, .viewer-banner strong {
+            color: #bfdbfe;
+            white-space: nowrap;
+            font-size: 12px;
+        }
+
+        .share-bar input {
+            flex: 1;
+            min-width: 120px;
+            padding: 6px 8px;
+            border: 1px solid #3b82f6;
+            border-radius: 4px;
+            color: #e5e7eb;
+            background: #111827;
+        }
+
+        .share-bar button {
+            padding: 6px 10px;
+            border: 0;
+            border-radius: 4px;
+            color: #fff;
+            background: #2563eb;
+            cursor: pointer;
+        }
+
+        .share-bar .danger {
+            background: #b91c1c;
+        }
+
+        .viewer-count {
+            color: #bfdbfe;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .viewer-banner {
+            display: none;
+            padding: 7px 12px;
+            color: #d1fae5;
+            background: #064e3b;
+            border-bottom: 1px solid #059669;
+            text-align: center;
+            font-size: 12px;
+            flex-shrink: 0;
+        }
+
+        @media (max-width: 700px) {
+            .share-bar {
+                flex-wrap: wrap;
+            }
+            .share-bar input {
+                order: 2;
+                flex-basis: 100%;
+            }
+        }
     </style>
 </head>
 <body>
@@ -633,6 +699,16 @@
             </div>
         </div>
         
+        <div class="share-bar" id="share-bar">
+            <strong>共享观看</strong>
+            <input id="share-link" type="text" readonly aria-label="共享观看链接">
+            <button id="copy-share-btn" type="button">复制链接</button>
+            <span class="viewer-count" id="viewer-count">0 位观看者</span>
+            <button id="end-share-btn" class="danger" type="button">结束共享</button>
+        </div>
+        <div class="viewer-banner" id="viewer-banner">
+            <strong>只读观看模式</strong>：键盘、鼠标、剪贴板和远程分辨率修改均已禁用
+        </div>
         <div class="rdp-container" id="rdp-container">
             <div id="rdp-display">
                 <div class="loading" id="loading">
@@ -661,6 +737,6 @@
     </div>
 
     <script src="guacamole-common-js/dist/guacamole-common.min.js"></script>
-    <script src="app.js?v=1.0.1"></script>
+    <script src="app.js?v=1.1.0"></script>
 </body>
 </html>

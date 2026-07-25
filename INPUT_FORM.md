@@ -21,10 +21,10 @@ http://localhost:3000/
 
 ### 2. URL参数访问
 
-也可以通过URL参数直接连接：
+URL 可以预填主机、端口、用户名和分辨率；密码仍需在页面手动输入：
 
 ```
-http://localhost:3000?host=YOUR_RDP_HOST&port=3389&user=YOUR_USER&password=YOUR_PASSWORD
+http://localhost:3000?host=YOUR_RDP_HOST&port=3389&user=YOUR_USER
 ```
 
 ### 3. 记住连接信息
@@ -50,8 +50,8 @@ http://localhost:3000?host=YOUR_RDP_HOST&port=3389&user=YOUR_USER&password=YOUR_
 
 ### 流程3：URL参数访问
 
-1. 访问 `http://localhost:3000/?host=...&user=...&password=...`
-2. 自动连接，无需手动输入
+1. 访问 `http://localhost:3000/?host=...&user=...`
+2. 在页面输入密码后点击连接
 
 ## 界面功能
 
@@ -85,11 +85,11 @@ http://localhost:3000?host=YOUR_RDP_HOST&port=3389&user=YOUR_USER&password=YOUR_
 
 连接信息保存在浏览器的localStorage中：
 - **Key**: `webrdp-params`
-- **数据**: host, port, user, password, width, height
+- **数据**: host, port, user, width, height
 
 ## 安全注意事项
 
-1. **密码安全**: 连接信息保存在浏览器本地，仅在本机安全
+1. **密码安全**: 密码不会写入 URL 或 localStorage，只保留在当前页面内存中
 2. **HTTPS**: 生产环境建议使用HTTPS
 3. **访问控制**: 建议实施访问控制策略
 

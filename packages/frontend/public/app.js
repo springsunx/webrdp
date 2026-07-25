@@ -1,41 +1,23 @@
-// WebRDP - 前端应用
 class WebRDPLite {
     constructor() {
         this.guacClient = null;
+        this.tunnel = null;
         this.keyboard = null;
         this.mouse = null;
         this.connectionStatus = 'disconnected';
         this.connectionParams = {};
-        this.backendUrl = this.getBackendUrl();
+        this.role = 'controller';
+        this.session = null;
+        this.sessionPollTimer = null;
         this.storageKey = 'webrdp-params';
-        
+        this.backendUrl = `${window.location.protocol}//${window.location.host}`;
+
         this.initElements();
         this.initEventListeners();
-        this.checkUrlParams();
+        this.initialize();
     }
-    
-    // 获取后端URL
-    getBackendUrl() {
-        // 合并部署时，后端和前端在同一端口
-        return `${window.location.protocol}//${window.location.host}`;
-    }
-    
-    // 获取WebSocket URL
-    getWebSocketUrl() {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const host = window.location.hostname;
-        const port = window.location.port;
-        
-        // 如果是标准端口（80/443），不带端口；否则带端口
-        if (port && port !== '80' && port !== '443') {
-            return `${protocol}//${host}:${port}`;
-        }
-        return `${protocol}//${host}`;
-    }
-    
-    // 初始化DOM元素
+
     initElements() {
-        // 登录界面元素
         this.loginContainer = document.getElementById('login-container');
         this.loginForm = document.getElementById('login-form');
         this.errorMessage = document.getElementById('error-message');
@@ -47,11 +29,9 @@ class WebRDPLite {
         this.heightInput = document.getElementById('height');
         this.rememberCheckbox = document.getElementById('remember');
         this.connectBtn = document.getElementById('connect-btn');
-        
-        // 桌面界面元素
+
         this.desktopContainer = document.getElementById('desktop-container');
         this.rdpContainer = document.getElementById('rdp-container');
-        this.touchHint = document.getElementById('touch-hint');
         this.statusElement = document.getElementById('status');
         this.disconnectBtn = document.getElementById('disconnect-btn');
         this.reconnectBtn = document.getElementById('reconnect-btn');
@@ -59,787 +39,438 @@ class WebRDPLite {
         this.backBtn = document.getElementById('back-btn');
         this.rdpDisplay = document.getElementById('rdp-display');
         this.loadingElement = document.getElementById('loading');
-        this.scrollHint = document.getElementById('scroll-hint');
         this.footerHost = document.getElementById('footer-host');
         this.footerPort = document.getElementById('footer-port');
         this.footerUser = document.getElementById('footer-user');
         this.footerWidth = document.getElementById('footer-width');
         this.footerHeight = document.getElementById('footer-height');
         this.resizeBtn = document.getElementById('resize-btn');
+        this.resolutionControls = document.querySelector('.resolution-controls');
+
+        this.shareBar = document.getElementById('share-bar');
+        this.shareLinkInput = document.getElementById('share-link');
+        this.copyShareBtn = document.getElementById('copy-share-btn');
+        this.endShareBtn = document.getElementById('end-share-btn');
+        this.viewerCount = document.getElementById('viewer-count');
+        this.viewerBanner = document.getElementById('viewer-banner');
     }
-    
-    // 初始化事件监听器
+
     initEventListeners() {
-        // 登录表单提交
-        this.loginForm.addEventListener('submit', (e) => {
-            e.preventDefault();
+        this.loginForm.addEventListener('submit', (event) => {
+            event.preventDefault();
             this.handleLogin();
         });
-        
-        // 桌面界面按钮
-        this.disconnectBtn.addEventListener('click', () => this.disconnect());
+        this.disconnectBtn.addEventListener('click', () => this.leaveSession(false));
         this.reconnectBtn.addEventListener('click', () => this.reconnect());
         this.fullscreenBtn.addEventListener('click', () => this.toggleFullscreen());
-        this.backBtn.addEventListener('click', () => this.showLogin());
+        this.backBtn.addEventListener('click', () => this.leaveSession(true));
         this.resizeBtn.addEventListener('click', () => this.resizeDisplay());
-        
-        // 键盘事件
-        document.addEventListener('keydown', (e) => this.handleKeyDown(e));
-        document.addEventListener('keyup', (e) => this.handleKeyUp(e));
-        
-        // 窗口大小变化监听（横竖屏切换、窗口缩放）
-        window.addEventListener('resize', () => {
-            this.adjustDisplaySize();
-        });
+        this.copyShareBtn.addEventListener('click', () => this.copyShareLink());
+        this.endShareBtn.addEventListener('click', () => this.leaveSession(false));
+        window.addEventListener('resize', () => this.adjustDisplaySize());
+        window.addEventListener('beforeunload', () => this.endOwnedSession(true));
     }
-    
-    // 检查URL参数
-    checkUrlParams() {
+
+    initialize() {
         const params = new URLSearchParams(window.location.search);
-        
-        const host = params.get('host');
-        const port = params.get('port');
-        const user = params.get('user');
-        const password = params.get('password');
-        let width = params.get('width');
-        let height = params.get('height');
-        const title = params.get('title');
-        const auto = params.get('auto'); // 自动计算分辨率
-        
-        // 设置标题
-        this.setTitle(title || 'WebRDP');
-        
-        // 如果没有指定分辨率或设置了auto参数，自动计算
-        if (!width || !height || auto === 'true' || auto === '1') {
-            const autoSize = this.calculateOptimalResolution();
-            width = width || String(autoSize.width);
-            height = height || String(autoSize.height);
-        }
-        
-        // 如果有URL参数，自动连接
-        if (host && user && password) {
+        const roomId = params.get('room');
+        const autoSize = this.calculateOptimalResolution();
+
+        if (roomId) {
+            this.role = 'viewer';
+            this.session = { roomId };
             this.connectionParams = {
-                host: host,
-                port: port || '3389',
-                user: user,
-                password: password,
-                width: width || '1024',
-                height: height || '768',
-                title: title || 'WebRDP'
+                host: '共享会话',
+                port: '-',
+                user: '只读观看者',
+                width: String(autoSize.width),
+                height: String(autoSize.height),
             };
-            
-            // 填充表单
-            this.fillForm();
-            
-            // 切换到桌面界面并连接
+            this.setTitle('WebRDP 共享观看');
             this.showDesktop();
-            setTimeout(() => this.connect(), 100);
-        } else {
-            // 没有URL参数，显示登录界面
-            this.loadSavedParams();
-            // 自动填充分辨率
-            const autoSize = this.calculateOptimalResolution();
-            this.widthInput.value = autoSize.width;
-            this.heightInput.value = autoSize.height;
+            setTimeout(() => this.connect(), 50);
+            return;
+        }
+
+        this.loadSavedParams();
+        this.hostInput.value = params.get('host') || this.hostInput.value;
+        this.portInput.value = params.get('port') || this.portInput.value || '3389';
+        this.userInput.value = params.get('user') || this.userInput.value;
+        this.widthInput.value = params.get('width') || String(autoSize.width);
+        this.heightInput.value = params.get('height') || String(autoSize.height);
+        this.setTitle(params.get('title') || 'WebRDP');
+
+        if (params.has('password')) {
+            params.delete('password');
+            const safeUrl = `${window.location.pathname}${params.toString() ? `?${params}` : ''}`;
+            window.history.replaceState({}, '', safeUrl);
         }
     }
-    
-    // 计算最佳分辨率
+
+    getWebSocketUrl() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        return `${protocol}//${window.location.host}`;
+    }
+
     calculateOptimalResolution() {
-        // 默认分辨率
-        let width = 1024;
-        let height = 768;
-        
-        const isMobile = this.isMobile();
-        
-        if (isMobile) {
-            // 手机端：使用标准桌面分辨率（1024x768），让用户横向滚动查看
-            // 如果屏幕非常小（<400px宽），用800x600保证可读性
-            if (window.innerWidth < 400) {
-                width = 800;
-                height = 600;
-            } else {
-                width = 1024;
-                height = 768;
-            }
-            console.log(`[Mobile] Using standard resolution: ${width}x${height}, scroll horizontally`);
-            return { width, height };
-        }
-        
-        // 获取容器的实际尺寸
-        const container = this.rdpDisplay || document.getElementById('rdp-display');
-        
-        if (container) {
-            const containerWidth = container.clientWidth || container.offsetWidth;
-            const containerHeight = container.clientHeight || container.offsetHeight;
-            
-            // 如果容器尺寸有效（大于100），使用容器尺寸
-            if (containerWidth > 100 && containerHeight > 100) {
-                width = containerWidth;
-                height = containerHeight;
-                console.log(`Using container size: ${containerWidth}x${containerHeight}`);
-            } else {
-                // 否则使用屏幕尺寸
-                const screenWidth = window.screen.width;
-                const screenHeight = window.screen.height;
-                const isPortrait = screenHeight > screenWidth;
-                
-                if (isPortrait) {
-                    width = 800;
-                    height = 600;
-                } else {
-                    width = 1024;
-                    height = 768;
-                }
-                console.log(`Using screen size: ${screenWidth}x${screenHeight}, Resolution: ${width}x${height}`);
-            }
-        } else {
-            // 如果容器不可用，使用屏幕尺寸
-            const screenWidth = window.screen.width;
-            const screenHeight = window.screen.height;
-            const isPortrait = screenHeight > screenWidth;
-            
-            if (isPortrait) {
-                width = 800;
-                height = 600;
-            } else {
-                width = 1024;
-                height = 768;
-            }
-            console.log(`No container, using screen size: ${screenWidth}x${screenHeight}, Resolution: ${width}x${height}`);
-        }
-        
-        // 确保分辨率是8的倍数（RDP要求）
-        width = Math.floor(width / 8) * 8;
-        height = Math.floor(height / 8) * 8;
-        
-        // 确保最小分辨率
-        width = Math.max(800, width);
-        height = Math.max(600, height);
-        
-        console.log(`Final Resolution: ${width}x${height}`);
-        
+        const width = Math.max(800, Math.floor(Math.min(window.screen.width, 1920) / 8) * 8);
+        const height = Math.max(600, Math.floor(Math.min(window.screen.height, 1080) / 8) * 8);
         return { width, height };
     }
-    
-    // 设置标题
+
     setTitle(title) {
-        // 更新页面标题
         document.getElementById('page-title').textContent = title;
         document.getElementById('login-title').textContent = title;
         document.getElementById('desktop-title').textContent = title;
     }
-    
-    // 加载保存的参数
+
     loadSavedParams() {
         try {
-            const saved = localStorage.getItem(this.storageKey);
-            if (saved) {
-                const params = JSON.parse(saved);
-                this.hostInput.value = params.host || '';
-                this.portInput.value = params.port || '3389';
-                this.userInput.value = params.user || '';
-                this.passwordInput.value = params.password || '';
-                this.widthInput.value = params.width || '1024';
-                this.heightInput.value = params.height || '768';
+            const saved = JSON.parse(localStorage.getItem(this.storageKey) || '{}');
+            if (Object.prototype.hasOwnProperty.call(saved, 'password')) {
+                delete saved.password;
+                localStorage.setItem(this.storageKey, JSON.stringify(saved));
             }
-        } catch (e) {
-            console.error('Failed to load saved params:', e);
+            this.hostInput.value = saved.host || '';
+            this.portInput.value = saved.port || '3389';
+            this.userInput.value = saved.user || '';
+            this.widthInput.value = saved.width || '1024';
+            this.heightInput.value = saved.height || '768';
+        } catch (error) {
+            localStorage.removeItem(this.storageKey);
         }
     }
-    
-    // 保存参数
+
     saveParams() {
-        if (this.rememberCheckbox.checked) {
-            const params = {
-                host: this.hostInput.value,
-                port: this.portInput.value,
-                user: this.userInput.value,
-                password: this.passwordInput.value,
-                width: this.widthInput.value,
-                height: this.heightInput.value
-            };
-            localStorage.setItem(this.storageKey, JSON.stringify(params));
+        if (!this.rememberCheckbox.checked) {
+            localStorage.removeItem(this.storageKey);
+            return;
         }
+        localStorage.setItem(this.storageKey, JSON.stringify({
+            host: this.hostInput.value.trim(),
+            port: this.portInput.value.trim(),
+            user: this.userInput.value.trim(),
+            width: this.widthInput.value.trim(),
+            height: this.heightInput.value.trim(),
+        }));
     }
-    
-    // 填充表单
-    fillForm() {
-        this.hostInput.value = this.connectionParams.host;
-        this.portInput.value = this.connectionParams.port;
-        this.userInput.value = this.connectionParams.user;
-        this.passwordInput.value = this.connectionParams.password;
-        this.widthInput.value = this.connectionParams.width;
-        this.heightInput.value = this.connectionParams.height;
-    }
-    
-    // 处理登录
+
     handleLogin() {
         const host = this.hostInput.value.trim();
-        const port = this.portInput.value.trim() || '3389';
         const user = this.userInput.value.trim();
-        const password = this.passwordInput.value.trim();
-        const width = this.widthInput.value.trim() || '1024';
-        const height = this.heightInput.value.trim() || '768';
-        
-        // 验证必填字段
-        if (!host) {
-            this.showError('请输入主机地址');
+        const password = this.passwordInput.value;
+        if (!host || !user || !password) {
+            this.showError('请输入主机地址、用户名和密码');
             return;
         }
-        
-        if (!user) {
-            this.showError('请输入用户名');
-            return;
-        }
-        
-        if (!password) {
-            this.showError('请输入密码');
-            return;
-        }
-        
-        // 保存参数
-        this.saveParams();
-        
-        // 设置连接参数
+
+        this.role = 'controller';
+        this.session = null;
         this.connectionParams = {
-            host: host,
-            port: port,
-            user: user,
-            password: password,
-            width: width,
-            height: height
+            host,
+            port: this.portInput.value.trim() || '3389',
+            user,
+            password,
+            width: this.widthInput.value.trim() || '1024',
+            height: this.heightInput.value.trim() || '768',
         };
-        
-        // 更新URL（可选）
-        const url = new URL(window.location.href);
-        url.searchParams.set('host', host);
-        url.searchParams.set('port', port);
-        url.searchParams.set('user', user);
-        url.searchParams.set('password', password);
-        url.searchParams.set('width', width);
-        url.searchParams.set('height', height);
-        window.history.replaceState({}, '', url.toString());
-        
-        // 切换到桌面界面并连接
+        this.saveParams();
+
+        const safeUrl = new URL(window.location.href);
+        safeUrl.search = '';
+        safeUrl.searchParams.set('host', host);
+        safeUrl.searchParams.set('port', this.connectionParams.port);
+        safeUrl.searchParams.set('user', user);
+        safeUrl.searchParams.set('width', this.connectionParams.width);
+        safeUrl.searchParams.set('height', this.connectionParams.height);
+        window.history.replaceState({}, '', safeUrl);
+
         this.showDesktop();
-        setTimeout(() => this.connect(), 100);
+        setTimeout(() => this.connect(), 50);
     }
-    
-    // 显示错误信息
-    showError(message) {
-        this.errorMessage.textContent = message;
-        this.errorMessage.style.display = 'block';
-        setTimeout(() => {
-            this.errorMessage.style.display = 'none';
-        }, 5000);
-    }
-    
-    // 显示登录界面
-    showLogin() {
-        this.disconnect();
-        this.loginContainer.style.display = 'flex';
-        this.desktopContainer.style.display = 'none';
-        
-        // 清除URL参数
-        window.history.replaceState({}, '', window.location.pathname);
-    }
-    
-    // 显示桌面界面
+
     showDesktop() {
         this.loginContainer.style.display = 'none';
         this.desktopContainer.style.display = 'flex';
-        
-        // 更新底部信息
-        this.footerHost.textContent = this.connectionParams.host;
-        this.footerPort.textContent = this.connectionParams.port;
-        this.footerUser.textContent = this.connectionParams.user;
+        this.footerHost.textContent = this.connectionParams.host || '-';
+        this.footerPort.textContent = this.connectionParams.port || '-';
+        this.footerUser.textContent = this.connectionParams.user || '-';
         this.footerWidth.value = this.connectionParams.width;
         this.footerHeight.value = this.connectionParams.height;
+        this.shareBar.style.display = this.role === 'controller' ? 'flex' : 'none';
+        this.viewerBanner.style.display = this.role === 'viewer' ? 'block' : 'none';
+        this.resolutionControls.style.display = this.role === 'controller' ? 'flex' : 'none';
     }
-    
-    // 更新状态显示
-    updateStatus(status, message) {
-        this.connectionStatus = status;
-        this.statusElement.textContent = message || status;
-        this.statusElement.className = `status ${status}`;
-        
-        // 更新按钮状态
-        this.connectBtn.disabled = status === 'connected' || status === 'connecting';
-        this.disconnectBtn.disabled = status !== 'connected';
-        
-        // 显示/隐藏加载动画
-        if (status === 'connecting') {
-            this.loadingElement.style.display = 'flex';
-        } else {
-            this.loadingElement.style.display = 'none';
-        }
-    }
-    
-    // 连接到RDP服务器
+
     async connect() {
-        if (!this.connectionParams.host || !this.connectionParams.user || !this.connectionParams.password) {
+        if (this.role === 'controller' &&
+            (!this.connectionParams.host || !this.connectionParams.user || !this.connectionParams.password)) {
             this.updateStatus('error', '缺少连接参数');
             return;
         }
-        
-        this.updateStatus('connecting', '正在连接...');
-        
+
+        this.disconnectTunnel();
+        this.updateStatus('connecting', this.role === 'viewer' ? '正在加入共享会话...' : '正在连接...');
+
         try {
-            // 清理之前的连接
-            this.disconnect();
-            
-            // 获取令牌
             const token = await this.getToken();
-            if (!token) {
-                throw new Error('Failed to get connection token');
-            }
-            
-            // 创建WebSocket隧道
-            const wsBase = this.getWebSocketUrl();
-            const tunnelUrl = `${wsBase}?token=${encodeURIComponent(token)}&width=${this.connectionParams.width}&height=${this.connectionParams.height}`;
-            
-            // @ts-ignore
-            const tunnel = new Guacamole.WebSocketTunnel(tunnelUrl);
-            
-            // 设置隧道错误处理
-            tunnel.onerror = (status) => {
-                console.error('Tunnel error:', status);
-                this.updateStatus('error', `隧道错误: ${status.message}`);
+            this.clearDisplay();
+            const tunnelUrl = `${this.getWebSocketUrl()}?token=${encodeURIComponent(token)}`;
+            this.tunnel = new Guacamole.WebSocketTunnel(tunnelUrl);
+            this.tunnel.onerror = (status) => {
+                this.updateStatus('error', status.message || '远程隧道错误');
             };
-            
-            // 创建Guacamole客户端
-            // @ts-ignore
-            this.guacClient = new Guacamole.Client(tunnel);
+
+            this.guacClient = new Guacamole.Client(this.tunnel);
             this.guacClient.keepAliveFrequency = 3000;
-            
-            // 将显示元素添加到DOM
             const displayElement = this.guacClient.getDisplay().getElement();
             this.rdpDisplay.appendChild(displayElement);
-            
-            // 设置状态变化监听
-            this.guacClient.onstatechange = (state) => {
-                this.handleStateChange(state);
-            };
-            
-            // 设置错误监听
+
+            this.guacClient.onstatechange = (state) => this.handleStateChange(state);
             this.guacClient.onerror = (status) => {
-                console.error('Client error:', status);
-                this.updateStatus('error', `客户端错误: ${status.message}`);
+                this.updateStatus('error', status.message || '远程连接错误');
             };
-            
-            // 设置剪贴板监听
-            this.guacClient.onclipboard = (stream, mimetype) => {
-                this.handleClipboard(stream, mimetype);
-            };
-            
-            // 连接
+            if (this.role === 'controller') {
+                this.guacClient.onclipboard = (stream, mimetype) => this.handleClipboard(stream, mimetype);
+            }
+
             this.guacClient.connect('');
-            
-            // 设置输入监听
-            this.setupInputListeners();
-            
+            if (this.role === 'controller') {
+                this.setupInputListeners();
+            } else {
+                displayElement.style.cursor = 'default';
+            }
+            this.startSessionPolling();
         } catch (error) {
-            console.error('Connection failed:', error);
-            this.updateStatus('error', `连接失败: ${error.message}`);
+            this.updateStatus('error', error.message || '连接失败');
         }
     }
-    
-    // 获取连接令牌
+
     async getToken() {
-        try {
-            const response = await fetch(`${this.backendUrl}/api/rdp/token`, {
+        if (this.role === 'viewer') {
+            const data = await this.fetchJson(`/api/sessions/${encodeURIComponent(this.session.roomId)}/join`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
                 body: JSON.stringify({
-                    host: this.connectionParams.host,
-                    port: parseInt(this.connectionParams.port),
-                    user: this.connectionParams.user,
-                    password: this.connectionParams.password,
-                    width: parseInt(this.connectionParams.width),
-                    height: parseInt(this.connectionParams.height),
+                    width: Number(this.connectionParams.width),
+                    height: Number(this.connectionParams.height),
                 }),
             });
-            
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            
-            const data = await response.json();
+            this.session.participantId = data.participantId;
             return data.token;
-        } catch (error) {
-            console.error('Failed to get token:', error);
-            throw error;
         }
+
+        const data = await this.fetchJson('/api/sessions', {
+            method: 'POST',
+            body: JSON.stringify({
+                host: this.connectionParams.host,
+                port: Number(this.connectionParams.port),
+                user: this.connectionParams.user,
+                password: this.connectionParams.password,
+                width: Number(this.connectionParams.width),
+                height: Number(this.connectionParams.height),
+            }),
+        });
+        this.session = {
+            roomId: data.roomId,
+            ownerSecret: data.ownerSecret,
+            expiresAt: data.expiresAt,
+        };
+        const shareUrl = new URL(window.location.origin + window.location.pathname);
+        shareUrl.searchParams.set('room', data.roomId);
+        this.shareLinkInput.value = shareUrl.toString();
+        this.viewerCount.textContent = '0 位观看者';
+        return data.token;
     }
-    
-    // 处理状态变化
+
+    async fetchJson(path, options = {}) {
+        const response = await fetch(`${this.backendUrl}${path}`, {
+            ...options,
+            headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+        });
+        const data = response.status === 204 ? null : await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data?.error || `请求失败 (${response.status})`);
+        return data;
+    }
+
     handleStateChange(state) {
-        let statusText = '';
-        let statusClass = 'disconnected';
-        
-        switch (state) {
-            case 0: // IDLE
-                statusText = '空闲';
-                statusClass = 'disconnected';
-                break;
-            case 1: // CONNECTING
-                statusText = '正在连接...';
-                statusClass = 'connecting';
-                break;
-            case 2: // WAITING
-                statusText = '等待中...';
-                statusClass = 'connecting';
-                break;
-            case 3: // CONNECTED
-                statusText = '已连接';
-                statusClass = 'connected';
-                this.adjustDisplaySize();
-                this.showTouchHint();
-                break;
-            case 4: // DISCONNECTING
-                statusText = '正在断开...';
-                statusClass = 'disconnected';
-                break;
-            case 5: // DISCONNECTED
-                statusText = '已断开';
-                statusClass = 'disconnected';
-                break;
-        }
-        
-        this.updateStatus(statusClass, statusText);
+        const states = {
+            0: ['disconnected', '空闲'],
+            1: ['connecting', '正在连接...'],
+            2: ['connecting', '等待远程桌面...'],
+            3: ['connected', this.role === 'viewer' ? '只读观看中' : '已连接'],
+            4: ['disconnected', '正在断开...'],
+            5: ['disconnected', '已断开'],
+        };
+        const [status, message] = states[state] || ['error', '未知状态'];
+        this.updateStatus(status, message);
+        if (state === 3) this.adjustDisplaySize();
     }
-    
-    // 设置输入监听
+
+    updateStatus(status, message) {
+        this.connectionStatus = status;
+        this.statusElement.textContent = message;
+        this.statusElement.className = `status ${status}`;
+        this.connectBtn.disabled = status === 'connected' || status === 'connecting';
+        this.disconnectBtn.disabled = status !== 'connected';
+        this.loadingElement.style.display = status === 'connecting' ? 'flex' : 'none';
+    }
+
     setupInputListeners() {
-        if (!this.guacClient) return;
-        
+        if (!this.guacClient || this.role !== 'controller') return;
         const displayElement = this.guacClient.getDisplay().getElement();
         displayElement.tabIndex = 0;
-        displayElement.style.cursor = 'none';
-        
-        const display = this.guacClient.getDisplay();
-        display.showCursor(true);
-        
-        // 设置光标层级
-        const cursorLayer = display.getCursorLayer();
-        if (cursorLayer) {
-            const cursorElement = cursorLayer.getElement();
-            if (cursorElement) {
-                cursorElement.style.zIndex = '1000';
-            }
-        }
-        
-        // 根据设备类型选择鼠标模式
-        const isMobile = this.isMobile();
-        const isTouchDevice = this.isTouchDevice();
-        const useTouchscreen = this.shouldUseTouchscreen();
-        
-        if (useTouchscreen) {
-            // 触摸屏设备或桌面版网站：使用 Touchscreen 模式（直接点击）
-            // @ts-ignore
-            this.mouse = new Guacamole.Mouse.Touchscreen(displayElement);
-            console.log('[WebRDP] 使用 Touchscreen 模式（触摸屏设备）');
-        } else if (isMobile) {
-            // 手机端：使用 Touchpad 模式
-            // @ts-ignore
-            this.mouse = new Guacamole.Mouse.Touchpad(displayElement);
-            console.log('[WebRDP] 使用 Touchpad 模式（手机端）');
-            
-            // 添加双指滚动容器支持
-            this.setupDualFingerScroll(displayElement);
-        } else {
-            // 桌面端：使用标准鼠标模式
-            // @ts-ignore
-            this.mouse = new Guacamole.Mouse(displayElement);
-            console.log('[WebRDP] 使用 Mouse 模式（桌面端）');
-        }
-        
-        // 鼠标事件处理
-        this.mouse.onmousedown = this.mouse.onmouseup = this.mouse.onmousemove = (mouseState) => {
-            if (this.guacClient) {
-                this.guacClient.sendMouseState(mouseState);
-            }
+        const useTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        this.mouse = useTouch
+            ? new Guacamole.Mouse.Touchscreen(displayElement)
+            : new Guacamole.Mouse(displayElement);
+        this.mouse.onmousedown = this.mouse.onmouseup = this.mouse.onmousemove = (state) => {
+            if (this.guacClient && this.role === 'controller') this.guacClient.sendMouseState(state);
         };
-        
-        // 键盘事件 - 使用Guacamole.Keyboard处理
-        // @ts-ignore
         this.keyboard = new Guacamole.Keyboard(displayElement);
-        
         this.keyboard.onkeydown = (keysym) => {
-            if (this.guacClient) {
-                this.guacClient.sendKeyEvent(1, keysym);
-            }
+            if (this.guacClient && this.role === 'controller') this.guacClient.sendKeyEvent(1, keysym);
         };
-        
         this.keyboard.onkeyup = (keysym) => {
-            if (this.guacClient) {
-                this.guacClient.sendKeyEvent(0, keysym);
-            }
+            if (this.guacClient && this.role === 'controller') this.guacClient.sendKeyEvent(0, keysym);
         };
-        
-        // 额外的键盘事件处理 - 拦截浏览器默认行为
-        displayElement.addEventListener('keydown', (e) => {
-            // 阻止浏览器拦截快捷键
-            if (e.altKey || e.ctrlKey || e.metaKey) {
-                e.preventDefault();
-                e.stopPropagation();
-            }
-        }, true);
-        
-        displayElement.addEventListener('keyup', (e) => {
-            if (e.altKey || e.ctrlKey || e.metaKey) {
-                e.preventDefault();
-                e.stopPropagation();
-            }
-        }, true);
-        
-        // 聚焦显示元素
         displayElement.focus();
     }
-    
-    // 处理键盘事件
-    handleKeyDown(e) {
-        if (e.target.tagName === 'INPUT') return;
-        
-        // 全屏快捷键
-        if (e.key === 'F11') {
-            e.preventDefault();
-            this.toggleFullscreen();
-        }
-    }
-    
-    handleKeyUp(e) {
-        if (e.target.tagName === 'INPUT') return;
-    }
-    
-    // 处理剪贴板
+
     handleClipboard(stream, mimetype) {
-        if (mimetype === 'text/plain') {
-            // @ts-ignore
-            const reader = new Guacamole.StringReader(stream);
-            let text = '';
-            
-            reader.ontext = (chunk) => {
-                text += chunk;
-            };
-            
-            reader.onend = async () => {
-                try {
-                    await navigator.clipboard.writeText(text);
-                    console.log('Clipboard updated from RDP');
-                } catch (err) {
-                    console.warn('Failed to update clipboard:', err);
+        if (this.role !== 'controller' || mimetype !== 'text/plain') return;
+        const reader = new Guacamole.StringReader(stream);
+        let text = '';
+        reader.ontext = (chunk) => { text += chunk; };
+        reader.onend = () => navigator.clipboard.writeText(text).catch(() => {});
+    }
+
+    adjustDisplaySize() {
+        if (!this.guacClient) return;
+        const width = Number(this.connectionParams.width) || 1024;
+        const height = Number(this.connectionParams.height) || 768;
+        const maxWidth = Math.max(1, this.rdpContainer.clientWidth - 16);
+        const maxHeight = Math.max(1, this.rdpContainer.clientHeight - 16);
+        const scale = Math.min(maxWidth / width, maxHeight / height, 1);
+        this.guacClient.getDisplay().scale(scale);
+    }
+
+    resizeDisplay() {
+        if (!this.guacClient || this.role !== 'controller') return;
+        const width = Math.max(800, Number(this.footerWidth.value) || 1024);
+        const height = Math.max(600, Number(this.footerHeight.value) || 768);
+        this.connectionParams.width = String(width);
+        this.connectionParams.height = String(height);
+        this.guacClient.sendSize(width, height);
+        this.adjustDisplaySize();
+    }
+
+    startSessionPolling() {
+        clearInterval(this.sessionPollTimer);
+        if (!this.session?.roomId) return;
+        const poll = async () => {
+            try {
+                const data = await this.fetchJson(`/api/sessions/${encodeURIComponent(this.session.roomId)}`);
+                if (this.role === 'controller') {
+                    this.viewerCount.textContent = `${data.viewerCount} / ${data.maxViewers} 位观看者`;
                 }
-            };
+            } catch (error) {
+                clearInterval(this.sessionPollTimer);
+                if (this.role === 'viewer' && this.connectionStatus === 'connected') {
+                    this.disconnectTunnel();
+                    this.updateStatus('error', '共享会话已结束');
+                }
+            }
+        };
+        this.sessionPollTimer = setInterval(poll, 3000);
+        poll();
+    }
+
+    async copyShareLink() {
+        if (!this.shareLinkInput.value) return;
+        await navigator.clipboard.writeText(this.shareLinkInput.value);
+        const original = this.copyShareBtn.textContent;
+        this.copyShareBtn.textContent = '已复制';
+        setTimeout(() => { this.copyShareBtn.textContent = original; }, 1500);
+    }
+
+    async endOwnedSession(keepalive = false) {
+        if (this.role !== 'controller' || !this.session?.roomId || !this.session.ownerSecret) return;
+        const { roomId, ownerSecret } = this.session;
+        this.session = null;
+        try {
+            await fetch(`${this.backendUrl}/api/sessions/${encodeURIComponent(roomId)}`, {
+                method: 'DELETE',
+                headers: { 'x-owner-secret': ownerSecret },
+                keepalive,
+            });
+        } catch (error) {
+            console.warn('Failed to end shared session', error);
         }
     }
-    
-    // 断开连接
-    disconnect() {
-        if (this.guacClient) {
-            this.guacClient.disconnect();
-            this.guacClient = null;
+
+    async leaveSession(showLogin) {
+        await this.endOwnedSession();
+        this.disconnectTunnel();
+        if (showLogin) {
+            this.role = 'controller';
+            this.session = null;
+            this.loginContainer.style.display = 'flex';
+            this.desktopContainer.style.display = 'none';
+            window.history.replaceState({}, '', window.location.pathname);
         }
-        
-        // 清理输入监听
+    }
+
+    async reconnect() {
+        if (this.role === 'controller') await this.endOwnedSession();
+        this.disconnectTunnel();
+        setTimeout(() => this.connect(), 100);
+    }
+
+    disconnectTunnel() {
+        clearInterval(this.sessionPollTimer);
+        this.sessionPollTimer = null;
         if (this.keyboard) {
             this.keyboard.onkeydown = null;
             this.keyboard.onkeyup = null;
             this.keyboard = null;
         }
-        
         if (this.mouse) {
             this.mouse.onmousedown = null;
             this.mouse.onmouseup = null;
             this.mouse.onmousemove = null;
             this.mouse = null;
         }
-        
-        // 清理显示
-        while (this.rdpDisplay.firstChild) {
-            this.rdpDisplay.removeChild(this.rdpDisplay.firstChild);
+        if (this.guacClient) {
+            try { this.guacClient.disconnect(); } catch (error) {}
+            this.guacClient = null;
         }
-        
-        // 重新添加加载动画
-        this.rdpDisplay.appendChild(this.loadingElement);
-        this.loadingElement.style.display = 'none';
-        
+        this.tunnel = null;
+        this.clearDisplay();
         this.updateStatus('disconnected', '已断开');
     }
-    
-    // 重新连接
-    reconnect() {
-        this.disconnect();
-        setTimeout(() => this.connect(), 100);
-    }
-    
-    // 判断是否为移动端
-    isMobile() {
-        return window.innerWidth <= 768;
-    }
-    
-    // 判断是否为触摸屏设备（支持触摸且可能是桌面模式）
-    isTouchDevice() {
-        return ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-    }
-    
-    // 判断是否应使用 Touchscreen 模式（触摸屏设备或桌面版网站）
-    shouldUseTouchscreen() {
-        // 如果是触摸屏设备且屏幕宽度大于手机宽度（可能是平板或触摸屏显示器）
-        // 或者启用了桌面版网站模式
-        const isLargeScreen = window.innerWidth > 768;
-        const isTouch = this.isTouchDevice();
-        
-        // 检测是否启用了桌面版网站（通过检测 viewport 缩放）
-        const isDesktopMode = window.outerWidth > window.innerWidth;
-        
-        return isTouch && (isLargeScreen || isDesktopMode);
-    }
-    
-    // 显示/隐藏滚动提示
-    showScrollHint(visible) {
-        if (!this.scrollHint) return;
-        if (visible) {
-            this.scrollHint.classList.add('visible');
-            // 3秒后自动隐藏
-            clearTimeout(this._scrollHintTimer);
-            this._scrollHintTimer = setTimeout(() => {
-                this.scrollHint.classList.remove('visible');
-            }, 3000);
-        } else {
-            this.scrollHint.classList.remove('visible');
+
+    clearDisplay() {
+        for (const child of Array.from(this.rdpDisplay.children)) {
+            if (child !== this.loadingElement) child.remove();
         }
+        if (!this.loadingElement.isConnected) this.rdpDisplay.appendChild(this.loadingElement);
     }
-    
-    // 显示触摸操作提示（仅手机端）
-    showTouchHint() {
-        if (!this.touchHint || !this.isMobile()) return;
-        this.touchHint.classList.add('visible');
-        // 5秒后自动隐藏
-        clearTimeout(this._touchHintTimer);
-        this._touchHintTimer = setTimeout(() => {
-            this.touchHint.classList.remove('visible');
-        }, 5000);
+
+    showError(message) {
+        this.errorMessage.textContent = message;
+        this.errorMessage.style.display = 'block';
+        setTimeout(() => { this.errorMessage.style.display = 'none'; }, 5000);
     }
-    
-    // 设置双指滚动容器支持（仅手机端）
-    setupDualFingerScroll(displayElement) {
-        const container = this.rdpContainer;
-        if (!container) return;
-        
-        let lastTouchX = 0;
-        let lastTouchY = 0;
-        
-        // 拦截双指触摸事件，滚动外层容器
-        displayElement.addEventListener('touchstart', (e) => {
-            if (e.touches.length === 2) {
-                lastTouchX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-                lastTouchY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-            }
-        }, { passive: true });
-        
-        displayElement.addEventListener('touchmove', (e) => {
-            if (e.touches.length === 2) {
-                const currentX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-                const currentY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-                
-                const deltaX = currentX - lastTouchX;
-                const deltaY = currentY - lastTouchY;
-                
-                // 滚动外层容器
-                container.scrollLeft -= deltaX;
-                container.scrollTop -= deltaY;
-                
-                lastTouchX = currentX;
-                lastTouchY = currentY;
-            }
-        }, { passive: true });
-    }
-    
-    // 调整显示大小
-    adjustDisplaySize() {
-        if (!this.guacClient || this.connectionStatus !== 'connected') return;
-        
-        const container = this.rdpContainer;
-        if (!container) return;
-        
-        const maxWidth = container.clientWidth - 40;
-        const maxHeight = container.clientHeight - 40;
-        
-        const width = parseInt(this.connectionParams.width);
-        const height = parseInt(this.connectionParams.height);
-        
-        let scale;
-        const isMobile = this.isMobile();
-        
-        if (isMobile) {
-            // 手机端：高度自适应，宽度允许溢出，用横向滚动查看完整画面
-            scale = Math.min(maxHeight / height, 1);
-            // 如果宽度也能完全显示，就不需要滚动了
-            if (width * scale <= maxWidth) {
-                // 宽度足够显示，仍然可以居中，用等比缩放
-                scale = Math.min(maxWidth / width, maxHeight / height, 1);
-            }
-        } else {
-            // 桌面端：保持原样，双维度缩放适应容器
-            scale = Math.min(maxWidth / width, maxHeight / height, 1);
-        }
-        
-        const displayElement = this.guacClient.getDisplay().getElement();
-        displayElement.style.width = `${width * scale}px`;
-        displayElement.style.height = `${height * scale}px`;
-        
-        // 若是移动端且内容超出宽度，显示滚动提示
-        if (isMobile) {
-            const displayWidth = width * scale;
-            if (displayWidth > maxWidth) {
-                this.showScrollHint(true);
-            } else {
-                // 宽度可容纳，居中对齐
-                container.style.justifyContent = 'center';
-                this.showScrollHint(false);
-            }
-        } else {
-            this.showScrollHint(false);
-        }
-        
-        // 发送大小更新到RDP服务器
-        this.guacClient.sendSize(width, height);
-    }
-    
-    // 调整分辨率
-    resizeDisplay() {
-        const width = parseInt(this.footerWidth.value) || 1024;
-        const height = parseInt(this.footerHeight.value) || 768;
-        
-        this.connectionParams.width = String(width);
-        this.connectionParams.height = String(height);
-        
-        this.adjustDisplaySize();
-        
-        // 更新URL参数
-        const url = new URL(window.location.href);
-        url.searchParams.set('width', String(width));
-        url.searchParams.set('height', String(height));
-        window.history.replaceState({}, '', url.toString());
-    }
-    
-    // 切换全屏
+
     toggleFullscreen() {
         if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen().catch(err => {
-                console.error('Failed to enter fullscreen:', err);
-            });
+            document.documentElement.requestFullscreen().catch(() => {});
         } else {
             document.exitFullscreen();
         }
     }
 }
 
-// 页面加载完成后初始化
 document.addEventListener('DOMContentLoaded', () => {
     window.webRdpLite = new WebRDPLite();
 });

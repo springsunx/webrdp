@@ -31,10 +31,10 @@ docker compose up -d
 http://localhost:3000
 ```
 
-### URL 参数访问
+### URL 参数预填（密码仍需手动输入）
 
 ```
-http://localhost:3000?host=YOUR_RDP_HOST&port=3389&user=YOUR_USER&password=YOUR_PASSWORD
+http://localhost:3000?host=YOUR_RDP_HOST&port=3389&user=YOUR_USER
 ```
 
 ## 📖 使用说明
@@ -44,15 +44,15 @@ http://localhost:3000?host=YOUR_RDP_HOST&port=3389&user=YOUR_USER&password=YOUR_
 访问 `http://localhost:3000`，会显示美观的输入界面：
 
 - 输入主机地址、用户名、密码
-- 勾选"记住连接信息"（可选）
+- 勾选"记住连接信息"（可选，不保存密码）
 - 点击"连接"按钮
 
 ### 2. URL 参数访问
 
-通过 URL 参数直接连接：
+URL 只用于预填非敏感参数，打开页面后仍需手动输入密码：
 
 ```
-http://localhost:3000?host=192.168.1.100&port=3389&user=admin&password=secret&width=1920&height=1080&title=我的电脑
+http://localhost:3000?host=192.168.1.100&port=3389&user=admin&width=1920&height=1080&title=我的电脑
 ```
 
 ### 3. URL 参数说明
@@ -62,7 +62,6 @@ http://localhost:3000?host=192.168.1.100&port=3389&user=admin&password=secret&wi
 | `host` | ✅ | - | RDP服务器IP或域名 |
 | `port` | ❌ | 3389 | RDP端口 |
 | `user` | ✅ | - | 用户名 |
-| `password` | ✅ | - | 密码 |
 | `width` | ❌ | 自动计算 | 屏幕宽度 |
 | `height` | ❌ | 自动计算 | 屏幕高度 |
 | `title` | ❌ | WebRDP | 页面标题 |
@@ -116,7 +115,7 @@ environment:
 cd packages/backend && npm install
 
 # 启动 Guacd
-docker run -d --name guacd -p 4822:4822 guacamole/guacd:latest
+docker run -d --name guacd -p 4822:4822 guacamole/guacd:1.6.0
 
 # 启动后端
 cd packages/backend && npm run dev
@@ -147,6 +146,7 @@ webrdp/
 
 - [输入界面使用说明](INPUT_FORM.md)
 - [部署指南](DEPLOYMENT.md)
+- [多用户共享观看](SHARING.md)
 
 ## 🔧 故障排除
 
@@ -173,4 +173,4 @@ webrdp/
 
 - [Nexus Terminal](https://github.com/Heavrnl/nexus-terminal) - 原始项目
 - [Apache Guacamole](https://guacamole.apache.org/) - RDP 协议支持
-- [Guacamole Lite](https://github.com/nicknisi/guacamole-lite) - 轻量级 Guacamole 客户端
+- [Guacamole Lite](https://github.com/vadimpronin/guacamole-lite) - 轻量级 Guacamole 客户端

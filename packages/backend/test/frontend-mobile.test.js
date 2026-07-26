@@ -173,3 +173,37 @@ test('mobile viewer count keeps the toolbar label compact', () => {
   app.updateViewerCount(12);
   assert.equal(app.viewerCount.textContent, '12 人在线');
 });
+
+test('control push immediately updates a reclaimed viewer toolbar', () => {
+  const context = loadFrontendClass();
+  const element = () => ({
+    classList: { toggle() {} },
+    style: {},
+    textContent: '',
+    title: '',
+  });
+  const app = Object.create(context.WebRDPLite.prototype);
+  app.role = 'viewer';
+  app.hasControl = true;
+  app.controlVersion = 1;
+  app.connectionStatus = 'disconnected';
+  app.takeControlBtn = element();
+  app.releaseControlBtn = element();
+  app.endShareBtn = element();
+  app.resolutionControls = element();
+  app.controlState = element();
+  app.viewerCount = element();
+  app.guacClient = null;
+
+  const allowDefault = app.handleCollaborationMessage(
+    256,
+    ['2', 'primary', 'false', '1'],
+  );
+
+  assert.equal(allowDefault, false);
+  assert.equal(app.hasControl, false);
+  assert.equal(app.controlVersion, 2);
+  assert.equal(app.releaseControlBtn.style.display, 'none');
+  assert.equal(app.takeControlBtn.style.display, 'inline-block');
+  assert.equal(app.controlState.textContent, '观看');
+});

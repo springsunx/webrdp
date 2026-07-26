@@ -1,3 +1,5 @@
+const COLLABORATION_MESSAGE_ID = 0x0100;
+
 class WebRDPLite {
     constructor() {
         this.guacClient = null;
@@ -8,6 +10,7 @@ class WebRDPLite {
         this.connectionParams = {};
         this.role = 'pending';
         this.hasControl = false;
+        this.controlVersion = -1;
         this.session = null;
         this.sessionPollTimer = null;
         this.storageKey = 'webrdp-params';
@@ -251,6 +254,9 @@ class WebRDPLite {
                 this.updateStatus('error', status.message || '远程连接错误');
             };
             this.guacClient.onclipboard = (stream, mimetype) => this.handleClipboard(stream, mimetype);
+            this.guacClient.onmsg = (messageId, args) => (
+                this.handleCollaborationMessage(messageId, args)
+            );
 
             this.guacClient.connect('');
             this.setupInputListeners();
@@ -419,6 +425,29 @@ class WebRDPLite {
         let text = '';
         reader.ontext = (chunk) => { text += chunk; };
         reader.onend = () => navigator.clipboard.writeText(text).catch(() => {});
+    }
+
+    applySessionState(data) {
+        const controlVersion = Number(data?.controlVersion);
+        if (Number.isFinite(controlVersion)) {
+            if (controlVersion < this.controlVersion) return;
+            this.controlVersion = controlVersion;
+        }
+        this.applyPermissionState(data);
+        if (Number.isFinite(Number(data?.viewerCount))) {
+            this.updateViewerCount(Number(data.viewerCount) + 1);
+        }
+    }
+
+    handleCollaborationMessage(messageId, args) {
+        if (messageId !== COLLABORATION_MESSAGE_ID || args.length < 4) return true;
+        this.applySessionState({
+            controlVersion: Number(args[0]),
+            controlOwner: args[1],
+            hasControl: args[2] === 'true',
+            viewerCount: Number(args[3]),
+        });
+        return false;
     }
 
     applyPermissionState(data = null) {
@@ -597,10 +626,9 @@ class WebRDPLite {
             try {
                 const data = await this.fetchJson(
                     `/api/sessions/${encodeURIComponent(this.session.roomId)}`,
-                    { headers: this.identityHeaders() },
+                    { headers: this.identityHeaders(), cache: 'no-store' },
                 );
-                this.applyPermissionState(data);
-                this.updateViewerCount(data.viewerCount + 1);
+                this.applySessionState(data);
             } catch (error) {
                 clearInterval(this.sessionPollTimer);
                 if (this.connectionStatus === 'connected') {
@@ -621,7 +649,7 @@ class WebRDPLite {
                 `/api/sessions/${encodeURIComponent(this.session.roomId)}/control`,
                 { method: 'POST', headers: this.identityHeaders(), body: '{}' },
             );
-            this.applyPermissionState(data);
+            this.applySessionState(data);
             this.showTouchHint();
         } catch (error) {
             this.showError(error.message);
@@ -637,7 +665,7 @@ class WebRDPLite {
                 `${this.backendUrl}/api/sessions/${encodeURIComponent(this.session.roomId)}/control`,
                 { method: 'DELETE', headers: this.identityHeaders(), keepalive },
             );
-            if (!keepalive && response.ok) this.applyPermissionState(await response.json());
+            if (!keepalive && response.ok) this.applySessionState(await response.json());
         } catch (error) {
             if (!keepalive) this.showError(error.message || '归还控制权失败');
         }

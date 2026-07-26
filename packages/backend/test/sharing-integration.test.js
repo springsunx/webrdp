@@ -123,6 +123,7 @@ test('same credential entry joins one session and temporary control returns to p
 
   let primarySocket;
   let participantSocket;
+  const participantServerMessages = [];
   t.after(async () => {
     primarySocket?.close();
     participantSocket?.close();
@@ -176,6 +177,9 @@ test('same credential entry joins one session and temporary control returns to p
   participantSocket = await openWebSocket(
     `ws://127.0.0.1:${appPort}/?token=${encodeURIComponent(participant.token)}`,
   );
+  participantSocket.on('message', (message) => {
+    participantServerMessages.push(message.toString());
+  });
   await waitFor(async () => {
     const response = await fetch(`http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}`, {
       headers: identityHeaders(participant),
@@ -212,6 +216,9 @@ test('same credential entry joins one session and temporary control returns to p
   );
   assert.equal(reclaimResponse.status, 200);
   assert.equal((await reclaimResponse.json()).hasControl, true);
+  await waitFor(() => participantServerMessages.some((message) => (
+    message.includes(instruction(['msg', 256, 2, 'primary', false, 1]))
+  )));
 
   primarySocket.send(instruction(['key', '1', '67']));
   await waitFor(() => postReadyMessages[0].includes('3.key'));

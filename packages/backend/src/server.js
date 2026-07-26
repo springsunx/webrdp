@@ -24,6 +24,7 @@ const JOIN_TOKEN_TTL_MS = parseInteger(
   5 * 60 * 1000,
 );
 const MAX_VIEWERS = parseInteger(process.env.MAX_VIEWERS, 20, 1, 500);
+const COLLABORATION_MESSAGE_ID = 0x0100;
 const TOKEN_ENCRYPTION_KEY = loadEncryptionKey();
 
 const sessions = new SessionManager({
@@ -116,11 +117,13 @@ app.post('/api/sessions/:roomId/join', (req, res) => {
 app.post('/api/sessions/:roomId/control', (req, res) => {
   try {
     const identity = readParticipantIdentity(req, true);
-    return res.json(sessions.takeControl(
+    const state = sessions.takeControl(
       req.params.roomId,
       identity.participantId,
       identity.participantSecret,
-    ));
+    );
+    broadcastSessionState(req.params.roomId);
+    return res.json(state);
   } catch (error) {
     return sendApiError(res, error);
   }
@@ -129,11 +132,13 @@ app.post('/api/sessions/:roomId/control', (req, res) => {
 app.delete('/api/sessions/:roomId/control', (req, res) => {
   try {
     const identity = readParticipantIdentity(req, true);
-    return res.json(sessions.releaseControl(
+    const state = sessions.releaseControl(
       req.params.roomId,
       identity.participantId,
       identity.participantSecret,
-    ));
+    );
+    broadcastSessionState(req.params.roomId);
+    return res.json(state);
   } catch (error) {
     return sendApiError(res, error);
   }
@@ -203,6 +208,7 @@ guacServer.on('open', (clientConnection) => {
       console.log(`[WebRDP] 协作参与者已加入: ${metadata.sessionId}`);
     }
     installInputGuard(clientConnection, metadata);
+    broadcastSessionState(metadata.sessionId);
   } catch (error) {
     console.error('[WebRDP] 更新会话打开状态失败:', error);
     clientConnection.close(error);
@@ -217,6 +223,7 @@ guacServer.on('close', (clientConnection) => {
     console.log(`[WebRDP] 主连接已关闭: ${metadata.sessionId}`);
   } else if (metadata.role === 'participant') {
     sessions.viewerClosed(metadata.sessionId, metadata.participantId);
+    broadcastSessionState(metadata.sessionId);
   }
 });
 
@@ -269,6 +276,35 @@ function closeSessionConnections(roomId) {
   for (const connection of guacServer.activeConnections.values()) {
     if (getConnectionMetadata(connection).sessionId === roomId) connection.close();
   }
+}
+
+function broadcastSessionState(roomId) {
+  for (const connection of guacServer.activeConnections.values()) {
+    const metadata = getConnectionMetadata(connection);
+    if (metadata.sessionId !== roomId) continue;
+    try {
+      const state = sessions.getPublic(
+        roomId,
+        metadata.participantId,
+        metadata.participantSecret,
+      );
+      if (!state) continue;
+      connection.send(encodeInstruction([
+        'msg',
+        COLLABORATION_MESSAGE_ID,
+        state.controlVersion,
+        state.controlOwner,
+        state.hasControl,
+        state.viewerCount,
+      ]));
+    } catch (error) {
+      console.warn('[WebRDP] Failed to push collaboration state', error);
+    }
+  }
+}
+
+function encodeInstruction(parts) {
+  return `${parts.map((part) => `${String(part).length}.${part}`).join(',')};`;
 }
 
 function installInputGuard(clientConnection, metadata) {

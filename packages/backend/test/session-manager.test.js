@@ -80,6 +80,52 @@ test('returns control to the primary participant when a temporary controller clo
   assert.equal(manager.hasControl(session.roomId, session.primaryParticipantId), true);
 });
 
+test('renews an active primary lease and allows reconnection within the grace period', () => {
+  let now = 10_000;
+  const manager = new SessionManager({
+    ttlMs: 1_000,
+    maxViewers: 1,
+    reconnectGraceMs: 500,
+    now: () => now,
+  });
+  const session = manager.create('long-lived', { hostname: '192.0.2.10' });
+  activate(manager, session);
+
+  now += 900;
+  const renewed = manager.getPublic(
+    session.roomId,
+    session.primaryParticipantId,
+    session.primaryParticipantSecret,
+  );
+  assert.equal(renewed.expiresAt, now + 1_000);
+  now += 900;
+  assert.equal(manager.hasControl(session.roomId, session.primaryParticipantId), true);
+  assert.equal(session.expiresAt, now + 1_000);
+
+  const oldSecret = session.primaryParticipantSecret;
+  manager.controllerClosed(session.roomId, '$connection-id');
+  assert.equal(session.state, 'reconnecting');
+  assert.equal(session.reconnectUntil, now + 500);
+  assert.equal(manager.findByConnectionKey('long-lived'), session);
+
+  manager.resumePrimary(session.roomId, session.ownerSecret);
+  assert.notEqual(session.primaryParticipantSecret, oldSecret);
+  manager.activate(
+    session.roomId,
+    '$resumed-connection',
+    session.primaryParticipantId,
+    session.primaryParticipantSecret,
+  );
+  assert.equal(session.state, 'active');
+  assert.equal(session.reconnectUntil, null);
+
+  manager.controllerClosed(session.roomId, '$connection-id');
+  assert.equal(session.state, 'active');
+  manager.controllerClosed(session.roomId, '$resumed-connection');
+  now += 501;
+  assert.equal(manager.findByConnectionKey('long-lived'), null);
+});
+
 test('enforces viewer limits, owner authentication, and expiry', () => {
   let now = 5_000;
   const manager = new SessionManager({

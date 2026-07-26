@@ -14,6 +14,13 @@ class WebRDPLite {
         this.session = null;
         this.sessionPollTimer = null;
         this.storageKey = 'webrdp-params';
+        this.resumeStorageKey = 'webrdp-primary-resume';
+        this.resumeSession = false;
+        this.reconnectGraceMs = 5 * 60 * 1000;
+        this.reconnectDeadline = 0;
+        this.reconnectTimer = null;
+        this.reconnectInProgress = false;
+        this.intentionalDisconnect = false;
         this.backendUrl = `${window.location.protocol}//${window.location.host}`;
 
         this.initElements();
@@ -75,7 +82,6 @@ class WebRDPLite {
         this.takeControlBtn.addEventListener('click', () => this.takeControl());
         this.releaseControlBtn.addEventListener('click', () => this.releaseControl());
         window.addEventListener('resize', () => this.adjustDisplaySize());
-        window.addEventListener('beforeunload', () => this.handleBeforeUnload());
     }
 
     initialize() {
@@ -99,6 +105,8 @@ class WebRDPLite {
             setTimeout(() => this.connect(), 50);
             return;
         }
+
+        if (this.restorePrimarySession(autoSize)) return;
 
         this.loadSavedParams();
         const source = fragmentParams.has('host') ? fragmentParams : queryParams;
@@ -176,6 +184,59 @@ class WebRDPLite {
         }));
     }
 
+    restorePrimarySession(autoSize) {
+        try {
+            const saved = JSON.parse(sessionStorage.getItem(this.resumeStorageKey) || 'null');
+            if (!saved?.roomId || !saved.ownerSecret || !saved.connectionParams) return false;
+            this.resumeSession = true;
+            this.role = 'pending';
+            this.session = {
+                roomId: saved.roomId,
+                ownerSecret: saved.ownerSecret,
+            };
+            this.connectionParams = {
+                ...saved.connectionParams,
+                width: String(autoSize.width),
+                height: String(autoSize.height),
+            };
+            this.reconnectGraceMs = Number(saved.reconnectGraceMs) || this.reconnectGraceMs;
+            this.hostInput.value = this.connectionParams.host || '';
+            this.portInput.value = this.connectionParams.port || '3389';
+            this.userInput.value = this.connectionParams.user || '';
+            this.widthInput.value = this.connectionParams.width;
+            this.heightInput.value = this.connectionParams.height;
+            this.setTitle(this.connectionParams.title || 'WebRDP');
+            this.showDesktop();
+            setTimeout(() => this.connect(), 50);
+            return true;
+        } catch (error) {
+            this.clearPrimaryResume();
+            return false;
+        }
+    }
+
+    persistPrimaryResume() {
+        if (this.role !== 'controller' || !this.session?.ownerSecret) return;
+        try {
+            const connectionParams = { ...this.connectionParams };
+            delete connectionParams.password;
+            sessionStorage.setItem(this.resumeStorageKey, JSON.stringify({
+                roomId: this.session.roomId,
+                ownerSecret: this.session.ownerSecret,
+                reconnectGraceMs: this.reconnectGraceMs,
+                connectionParams,
+            }));
+        } catch (error) {
+            console.warn('Failed to save primary reconnect state', error);
+        }
+    }
+
+    clearPrimaryResume() {
+        try {
+            sessionStorage.removeItem(this.resumeStorageKey);
+        } catch (error) {}
+    }
+
     handleLogin() {
         const host = this.hostInput.value.trim();
         const user = this.userInput.value.trim();
@@ -232,8 +293,16 @@ class WebRDPLite {
             return;
         }
 
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+        this.reconnectInProgress = true;
         this.disconnectTunnel();
-        this.updateStatus('connecting', credentialEntry ? '正在加入或创建协作会话...' : '正在加入共享会话...');
+        this.updateStatus(
+            'connecting',
+            this.resumeSession
+                ? '正在恢复主连接...'
+                : (credentialEntry ? '正在加入或创建协作会话...' : '正在加入共享会话...'),
+        );
 
         try {
             const token = await this.getToken();
@@ -241,7 +310,7 @@ class WebRDPLite {
             const tunnelUrl = `${this.getWebSocketUrl()}?token=${encodeURIComponent(token)}`;
             this.tunnel = new Guacamole.WebSocketTunnel(tunnelUrl);
             this.tunnel.onerror = (status) => {
-                this.updateStatus('error', status.message || '远程隧道错误');
+                this.handleRemoteError(status.message || '远程隧道错误');
             };
 
             this.guacClient = new Guacamole.Client(this.tunnel);
@@ -251,7 +320,7 @@ class WebRDPLite {
 
             this.guacClient.onstatechange = (state) => this.handleStateChange(state);
             this.guacClient.onerror = (status) => {
-                this.updateStatus('error', status.message || '远程连接错误');
+                this.handleRemoteError(status.message || '远程连接错误');
             };
             this.guacClient.onclipboard = (stream, mimetype) => this.handleClipboard(stream, mimetype);
             this.guacClient.onmsg = (messageId, args) => (
@@ -263,14 +332,35 @@ class WebRDPLite {
             this.applyPermissionState();
             this.startSessionPolling();
         } catch (error) {
-            this.updateStatus('error', error.message || '连接失败');
+            this.reconnectInProgress = false;
+            if (this.resumeSession && this.canRetryPrimaryReconnect(error)) {
+                this.schedulePrimaryReconnect();
+            } else {
+                if (this.resumeSession) {
+                    this.clearPrimaryResume();
+                    this.resumeSession = false;
+                }
+                this.updateStatus('error', error.message || '连接失败');
+            }
         }
     }
 
     async getToken() {
         let data;
         const credentialEntry = Boolean(this.connectionParams.password);
-        if (!credentialEntry && this.session?.roomId) {
+        if (this.resumeSession && this.session?.roomId && this.session.ownerSecret) {
+            data = await this.fetchJson(
+                `/api/sessions/${encodeURIComponent(this.session.roomId)}/resume`,
+                {
+                    method: 'POST',
+                    headers: { 'x-owner-secret': this.session.ownerSecret },
+                    body: JSON.stringify({
+                        width: Number(this.connectionParams.width),
+                        height: Number(this.connectionParams.height),
+                    }),
+                },
+            );
+        } else if (!credentialEntry && this.session?.roomId) {
             data = await this.fetchJson(`/api/sessions/${encodeURIComponent(this.session.roomId)}/join`, {
                 method: 'POST',
                 body: JSON.stringify({
@@ -284,6 +374,8 @@ class WebRDPLite {
 
         this.role = data.role;
         this.hasControl = Boolean(data.hasControl);
+        this.resumeSession = false;
+        this.reconnectGraceMs = Number(data.reconnectGraceMs) || this.reconnectGraceMs;
         this.session = {
             roomId: data.roomId,
             participantId: data.participantId,
@@ -291,6 +383,7 @@ class WebRDPLite {
             ownerSecret: data.ownerSecret,
             expiresAt: data.expiresAt,
         };
+        this.persistPrimaryResume();
         this.showDesktop();
         return data.token;
     }
@@ -351,8 +444,19 @@ class WebRDPLite {
         const [status, message] = states[state] || ['error', '未知状态'];
         this.updateStatus(status, message);
         if (state === 3) {
+            this.reconnectInProgress = false;
+            this.reconnectDeadline = 0;
+            this.intentionalDisconnect = false;
+            this.persistPrimaryResume();
             this.adjustDisplaySize();
             this.showTouchHint();
+        } else if (state === 5) {
+            this.reconnectInProgress = false;
+            if (!this.intentionalDisconnect
+                && this.role === 'controller' && this.session?.ownerSecret) {
+                this.resumeSession = true;
+                this.schedulePrimaryReconnect();
+            }
         }
     }
 
@@ -361,6 +465,8 @@ class WebRDPLite {
         const mobileMessages = {
             '正在连接...': '连接中',
             '等待远程桌面...': '等待桌面',
+            '正在恢复主连接...': '恢复中',
+            '主连接中断，正在自动恢复...': '恢复中',
             '已连接 · 可操作': '可操作',
             '已连接 · 观看中': '观看中',
             '正在断开...': '断开中',
@@ -436,6 +542,14 @@ class WebRDPLite {
         this.applyPermissionState(data);
         if (Number.isFinite(Number(data?.viewerCount))) {
             this.updateViewerCount(Number(data.viewerCount) + 1);
+        }
+    }
+
+    handleRemoteError(message) {
+        this.updateStatus('error', message);
+        if (!this.intentionalDisconnect && this.role === 'controller' && this.session?.ownerSecret) {
+            this.resumeSession = true;
+            this.schedulePrimaryReconnect();
         }
     }
 
@@ -674,6 +788,8 @@ class WebRDPLite {
     async endOwnedSession(keepalive = false) {
         if (this.role !== 'controller' || !this.session?.roomId || !this.session.ownerSecret) return;
         const { roomId, ownerSecret } = this.session;
+        this.clearPrimaryResume();
+        this.resumeSession = false;
         this.session = null;
         try {
             await fetch(`${this.backendUrl}/api/sessions/${encodeURIComponent(roomId)}`, {
@@ -686,12 +802,10 @@ class WebRDPLite {
         }
     }
 
-    handleBeforeUnload() {
-        if (this.role === 'controller') this.endOwnedSession(true);
-        else this.releaseControl(true);
-    }
-
     async leaveSession(showLogin) {
+        this.intentionalDisconnect = true;
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
         if (this.role === 'controller') await this.endOwnedSession();
         else await this.releaseControl();
         this.disconnectTunnel();
@@ -707,12 +821,44 @@ class WebRDPLite {
     }
 
     async reconnect() {
-        if (this.role === 'controller') await this.endOwnedSession();
-        else await this.releaseControl();
+        const isPrimary = this.role === 'controller';
+        this.intentionalDisconnect = true;
+        if (!isPrimary) await this.releaseControl();
         this.disconnectTunnel();
-        this.role = 'pending';
+        this.intentionalDisconnect = false;
+        this.resumeSession = isPrimary;
+        this.reconnectDeadline = Date.now() + this.reconnectGraceMs;
+        if (!isPrimary) this.role = 'pending';
         this.hasControl = false;
-        setTimeout(() => this.connect(), 100);
+        setTimeout(() => this.connect(), 250);
+    }
+
+    canRetryPrimaryReconnect(error) {
+        if (!this.session?.ownerSecret) return false;
+        if ([403, 404].includes(error?.status)) return false;
+        if (!this.reconnectDeadline) {
+            this.reconnectDeadline = Date.now() + this.reconnectGraceMs;
+        }
+        return Date.now() < this.reconnectDeadline;
+    }
+
+    schedulePrimaryReconnect() {
+        if (this.intentionalDisconnect || this.reconnectTimer || !this.session?.ownerSecret) return;
+        if (!this.reconnectDeadline) {
+            this.reconnectDeadline = Date.now() + this.reconnectGraceMs;
+        }
+        if (Date.now() >= this.reconnectDeadline) {
+            this.clearPrimaryResume();
+            this.resumeSession = false;
+            this.updateStatus('error', '主连接恢复超时，请使用原始连接链接重新连接');
+            return;
+        }
+        this.updateStatus('connecting', '主连接中断，正在自动恢复...');
+        this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            this.resumeSession = true;
+            this.connect();
+        }, 1000);
     }
 
     disconnectTunnel() {
@@ -735,6 +881,8 @@ class WebRDPLite {
             this.mouse = null;
         }
         if (this.guacClient) {
+            this.guacClient.onstatechange = null;
+            this.guacClient.onerror = null;
             try { this.guacClient.disconnect(); } catch (error) {}
             this.guacClient = null;
         }

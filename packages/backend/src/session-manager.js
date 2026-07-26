@@ -1,10 +1,17 @@
 const crypto = require('crypto');
 
 class SessionManager {
-  constructor({ ttlMs, maxViewers, pendingTtlMs = 60_000, now = () => Date.now() }) {
+  constructor({
+    ttlMs,
+    maxViewers,
+    pendingTtlMs = 60_000,
+    reconnectGraceMs = 5 * 60_000,
+    now = () => Date.now(),
+  }) {
     this.ttlMs = ttlMs;
     this.maxViewers = maxViewers;
     this.pendingTtlMs = pendingTtlMs;
+    this.reconnectGraceMs = reconnectGraceMs;
     this.now = now;
     this.sessions = new Map();
     this.connectionIndex = new Map();
@@ -18,22 +25,24 @@ class SessionManager {
     return count;
   }
 
-  openOrCreate(connectionKey) {
+  openOrCreate(connectionKey, connectionSettings = null) {
     const existing = this.findByConnectionKey(connectionKey);
     if (existing) return { session: existing, created: false };
-    return { session: this.create(connectionKey), created: true };
+    return { session: this.create(connectionKey, connectionSettings), created: true };
   }
 
-  create(connectionKey = null) {
+  create(connectionKey = null, connectionSettings = null) {
     const now = this.now();
     const session = {
       roomId: crypto.randomBytes(16).toString('base64url'),
       ownerSecret: crypto.randomBytes(32).toString('base64url'),
       connectionKey,
+      connectionSettings,
       state: 'creating',
       guacdConnectionId: null,
       createdAt: now,
       expiresAt: now + this.ttlMs,
+      reconnectUntil: null,
       primaryParticipantId: crypto.randomBytes(16).toString('base64url'),
       primaryParticipantSecret: crypto.randomBytes(32).toString('base64url'),
       primaryConnected: false,
@@ -54,7 +63,10 @@ class SessionManager {
     const session = this.sessions.get(roomId);
     const creationExpired = session?.state === 'creating'
       && session.createdAt + this.pendingTtlMs <= this.now();
-    if (!session || session.state === 'closed' || session.expiresAt <= this.now() || creationExpired) {
+    const reconnectExpired = session?.state === 'reconnecting'
+      && session.reconnectUntil <= this.now();
+    if (!session || session.state === 'closed' || session.expiresAt <= this.now()
+      || creationExpired || reconnectExpired) {
       this.connectionIndex.delete(connectionKey);
       if (session) this.sessions.delete(roomId);
       return null;
@@ -68,10 +80,11 @@ class SessionManager {
 
   getPublic(roomId, participantId = null, participantSecret = null) {
     const session = this.sessions.get(roomId);
-    if (!session || session.expiresAt <= this.now() || session.state === 'closed') return null;
+    if (!session || this.isExpired(session)) return null;
     let identity = null;
     if (participantId || participantSecret) {
       identity = this.authenticate(session, participantId, participantSecret);
+      if (identity.isPrimary && session.primaryConnected) this.renew(session);
     }
     return {
       roomId: session.roomId,
@@ -79,10 +92,12 @@ class SessionManager {
       viewerCount: session.viewers.size,
       maxViewers: this.maxViewers,
       expiresAt: session.expiresAt,
+      reconnectUntil: session.reconnectUntil,
       controlVersion: session.controlVersion,
       controlOwner: session.controlHolderId === session.primaryParticipantId ? 'primary' : 'participant',
       isPrimary: identity?.isPrimary || false,
-      hasControl: identity?.participantId === session.controlHolderId,
+      hasControl: session.state === 'active'
+        && identity?.participantId === session.controlHolderId,
     };
   }
 
@@ -93,6 +108,8 @@ class SessionManager {
     session.guacdConnectionId = guacdConnectionId;
     session.primaryConnected = true;
     session.state = 'active';
+    session.reconnectUntil = null;
+    this.renew(session);
     return session;
   }
 
@@ -139,15 +156,38 @@ class SessionManager {
     if (session.controlHolderId === participantId) this.restorePrimaryControl(session);
   }
 
-  controllerClosed(roomId) {
+  controllerClosed(roomId, guacdConnectionId = null) {
     const session = this.sessions.get(roomId);
     if (!session) return;
-    session.state = 'closed';
+    if (guacdConnectionId && session.guacdConnectionId !== guacdConnectionId) return;
+    session.state = 'reconnecting';
     session.guacdConnectionId = null;
     session.primaryConnected = false;
     session.pendingViewers.clear();
     session.viewers.clear();
-    this.removeConnectionIndex(session);
+    this.restorePrimaryControl(session);
+    session.reconnectUntil = this.now() + this.reconnectGraceMs;
+    session.expiresAt = session.reconnectUntil;
+  }
+
+  resumePrimary(roomId, ownerSecret) {
+    const session = this.require(roomId);
+    if (session.state !== 'reconnecting' || session.reconnectUntil <= this.now()) {
+      throw this.error(409, 'Primary session is not waiting for reconnection');
+    }
+    if (!this.safeEqual(session.ownerSecret, ownerSecret)) {
+      throw this.error(403, 'Not authorized to resume this shared session');
+    }
+    this.rotatePrimarySecret(session);
+    return session;
+  }
+
+  resumePrimaryByConnection(session) {
+    if (!session || session.state !== 'reconnecting' || session.reconnectUntil <= this.now()) {
+      throw this.error(409, 'Primary session is not waiting for reconnection');
+    }
+    this.rotatePrimarySecret(session);
+    return session;
   }
 
   takeControl(roomId, participantId, participantSecret) {
@@ -171,6 +211,10 @@ class SessionManager {
 
   hasControl(roomId, participantId) {
     const session = this.sessions.get(roomId);
+    if (session?.state === 'active' && session.primaryConnected
+      && participantId === session.primaryParticipantId) {
+      this.renew(session);
+    }
     return Boolean(
       session
       && session.state === 'active'
@@ -234,7 +278,10 @@ class SessionManager {
       this.prunePending(session);
       const creationExpired = session.state === 'creating'
         && session.createdAt + this.pendingTtlMs <= now;
-      if (session.expiresAt <= now || session.state === 'closed' || creationExpired) {
+      const reconnectExpired = session.state === 'reconnecting'
+        && session.reconnectUntil <= now;
+      if (session.expiresAt <= now || session.state === 'closed'
+        || creationExpired || reconnectExpired) {
         this.removeConnectionIndex(session);
         this.sessions.delete(roomId);
         removed += 1;
@@ -245,7 +292,7 @@ class SessionManager {
 
   require(roomId) {
     const session = this.sessions.get(roomId);
-    if (!session || session.expiresAt <= this.now() || session.state === 'closed') {
+    if (!session || this.isExpired(session)) {
       throw this.error(404, 'Shared session not found or expired');
     }
     return session;
@@ -263,6 +310,20 @@ class SessionManager {
     if (session.connectionKey && this.connectionIndex.get(session.connectionKey) === session.roomId) {
       this.connectionIndex.delete(session.connectionKey);
     }
+  }
+
+  renew(session) {
+    session.expiresAt = this.now() + this.ttlMs;
+  }
+
+  rotatePrimarySecret(session) {
+    session.primaryParticipantSecret = crypto.randomBytes(32).toString('base64url');
+  }
+
+  isExpired(session) {
+    return session.state === 'closed'
+      || session.expiresAt <= this.now()
+      || (session.state === 'reconnecting' && session.reconnectUntil <= this.now());
   }
 
   safeEqual(expectedValue, suppliedValue) {

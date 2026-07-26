@@ -9,12 +9,18 @@ function loadFrontendClass() {
     path.resolve(__dirname, '../../frontend/public/app.js'),
     'utf8',
   );
+  const sessionValues = new Map();
   const context = {
     URL,
     URLSearchParams,
     clearTimeout,
     console,
     navigator: { maxTouchPoints: 5 },
+    sessionStorage: {
+      getItem(key) { return sessionValues.get(key) || null; },
+      removeItem(key) { sessionValues.delete(key); },
+      setItem(key, value) { sessionValues.set(key, value); },
+    },
     setTimeout,
     window: { innerWidth: 390, outerWidth: 390 },
     document: { addEventListener() {} },
@@ -206,4 +212,74 @@ test('control push immediately updates a reclaimed viewer toolbar', () => {
   assert.equal(app.releaseControlBtn.style.display, 'none');
   assert.equal(app.takeControlBtn.style.display, 'inline-block');
   assert.equal(app.controlState.textContent, '观看');
+});
+
+test('primary reconnect state survives refresh without storing the RDP password', () => {
+  const context = loadFrontendClass();
+  context.setTimeout = () => 0;
+  const app = Object.create(context.WebRDPLite.prototype);
+  app.resumeStorageKey = 'webrdp-primary-resume';
+  app.reconnectGraceMs = 300_000;
+  app.role = 'controller';
+  app.session = { roomId: 'room-1', ownerSecret: 'owner-secret' };
+  app.connectionParams = {
+    host: '192.0.2.10',
+    port: '3389',
+    user: 'test-user',
+    password: 'must-not-be-stored',
+    width: '1024',
+    height: '768',
+    title: 'Test RDP',
+  };
+  app.persistPrimaryResume();
+
+  const saved = JSON.parse(context.sessionStorage.getItem(app.resumeStorageKey));
+  assert.equal(saved.connectionParams.password, undefined);
+
+  const restored = Object.create(context.WebRDPLite.prototype);
+  restored.resumeStorageKey = app.resumeStorageKey;
+  restored.reconnectGraceMs = 300_000;
+  restored.hostInput = {};
+  restored.portInput = {};
+  restored.userInput = {};
+  restored.widthInput = {};
+  restored.heightInput = {};
+  restored.setTitle = (title) => { restored.title = title; };
+  restored.showDesktop = () => { restored.desktopShown = true; };
+
+  assert.equal(restored.restorePrimarySession({ width: 1280, height: 720 }), true);
+  assert.equal(restored.resumeSession, true);
+  assert.equal(restored.session.ownerSecret, 'owner-secret');
+  assert.equal(restored.connectionParams.password, undefined);
+  assert.equal(restored.connectionParams.width, '1280');
+  assert.equal(restored.desktopShown, true);
+});
+
+test('an unexpected primary tunnel error schedules automatic reconnection', () => {
+  const context = loadFrontendClass();
+  let scheduledDelay;
+  context.setTimeout = (handler, delay) => {
+    scheduledDelay = delay;
+    return 42;
+  };
+  const app = Object.create(context.WebRDPLite.prototype);
+  app.intentionalDisconnect = false;
+  app.role = 'controller';
+  app.session = { roomId: 'room-1', ownerSecret: 'owner-secret' };
+  app.resumeSession = false;
+  app.reconnectTimer = null;
+  app.reconnectDeadline = 0;
+  app.reconnectGraceMs = 300_000;
+  app.updateStatus = (status, message) => {
+    app.lastStatus = status;
+    app.lastMessage = message;
+  };
+
+  app.handleRemoteError('network interrupted');
+
+  assert.equal(app.resumeSession, true);
+  assert.equal(app.reconnectTimer, 42);
+  assert.equal(scheduledDelay, 1000);
+  assert.equal(app.lastStatus, 'connecting');
+  assert.equal(app.lastMessage, '主连接中断，正在自动恢复...');
 });

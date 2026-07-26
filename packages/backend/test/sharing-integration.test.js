@@ -245,6 +245,43 @@ test('same credential entry joins one session and temporary control returns to p
     return session.viewerCount === 0 && session.hasControl;
   });
 
+  const disconnectedPrimary = waitForClose(primarySocket);
+  primarySocket.close();
+  await disconnectedPrimary;
+  primarySocket = null;
+  await waitFor(async () => {
+    const response = await fetch(`http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}`, {
+      headers: identityHeaders(primary),
+    });
+    const session = await response.json();
+    return session.state === 'reconnecting' && !session.hasControl;
+  });
+
+  const resumeResponse = await fetch(
+    `http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}/resume`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-owner-secret': primary.ownerSecret,
+      },
+      body: JSON.stringify({ width: 1366, height: 768 }),
+    },
+  );
+  assert.equal(resumeResponse.status, 200);
+  const resumedPrimary = await resumeResponse.json();
+  assert.equal(resumedPrimary.role, 'controller');
+  primarySocket = await openWebSocket(
+    `ws://127.0.0.1:${appPort}/?token=${encodeURIComponent(resumedPrimary.token)}`,
+  );
+  await waitFor(async () => {
+    const response = await fetch(`http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}`, {
+      headers: identityHeaders(resumedPrimary),
+    });
+    const session = await response.json();
+    return session.state === 'active' && session.hasControl;
+  });
+
   const primaryClosed = waitForClose(primarySocket);
   const deleteResponse = await fetch(
     `http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}`,

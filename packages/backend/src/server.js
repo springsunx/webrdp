@@ -23,6 +23,18 @@ const JOIN_TOKEN_TTL_MS = parseInteger(
   10 * 1000,
   5 * 60 * 1000,
 );
+const PRIMARY_RECONNECT_GRACE_MS = parseInteger(
+  process.env.PRIMARY_RECONNECT_GRACE_MS,
+  5 * 60 * 1000,
+  10 * 1000,
+  60 * 60 * 1000,
+);
+const GUACAMOLE_MAX_INACTIVITY_MS = parseInteger(
+  process.env.GUACAMOLE_MAX_INACTIVITY_MS,
+  0,
+  0,
+  60 * 60 * 1000,
+);
 const MAX_VIEWERS = parseInteger(process.env.MAX_VIEWERS, 20, 1, 500);
 const COLLABORATION_MESSAGE_ID = 0x0100;
 const TOKEN_ENCRYPTION_KEY = loadEncryptionKey();
@@ -31,6 +43,7 @@ const sessions = new SessionManager({
   ttlMs: SESSION_TTL_MS,
   maxViewers: MAX_VIEWERS,
   pendingTtlMs: JOIN_TOKEN_TTL_MS,
+  reconnectGraceMs: PRIMARY_RECONNECT_GRACE_MS,
 });
 
 const app = express();
@@ -58,34 +71,21 @@ app.post('/api/sessions', (req, res) => {
   try {
     const rdp = normalizeRdpSettings(req.body);
     const connectionKey = createConnectionKey(rdp);
-    const opened = sessions.openOrCreate(connectionKey);
+    const opened = sessions.openOrCreate(connectionKey, rdp);
 
     if (!opened.created) {
       if (opened.session.state === 'creating') {
         return res.status(409).json({ error: '主连接正在建立，请稍后重试', retryAfterMs: 500 });
       }
+      if (opened.session.state === 'reconnecting') {
+        const session = sessions.resumePrimaryByConnection(opened.session);
+        session.connectionSettings = rdp;
+        return res.json(createPrimaryResponse(session, rdp));
+      }
       return res.json(createParticipantResponse(opened.session.roomId, req.body));
     }
 
-    const session = opened.session;
-    const token = encryptToken({
-      expiration: Date.now() + JOIN_TOKEN_TTL_MS,
-      sessionId: session.roomId,
-      participantId: session.primaryParticipantId,
-      participantSecret: session.primaryParticipantSecret,
-      role: 'primary',
-      connection: { type: 'rdp', settings: rdp },
-    });
-    return res.status(201).json({
-      roomId: session.roomId,
-      participantId: session.primaryParticipantId,
-      participantSecret: session.primaryParticipantSecret,
-      ownerSecret: session.ownerSecret,
-      role: 'controller',
-      hasControl: true,
-      expiresAt: session.expiresAt,
-      token,
-    });
+    return res.status(201).json(createPrimaryResponse(opened.session, rdp));
   } catch (error) {
     return sendApiError(res, error);
   }
@@ -109,6 +109,21 @@ app.get('/api/sessions/:roomId', (req, res) => {
 app.post('/api/sessions/:roomId/join', (req, res) => {
   try {
     return res.json(createParticipantResponse(req.params.roomId, req.body));
+  } catch (error) {
+    return sendApiError(res, error);
+  }
+});
+
+app.post('/api/sessions/:roomId/resume', (req, res) => {
+  try {
+    const session = sessions.resumePrimary(
+      req.params.roomId,
+      req.get('x-owner-secret') || '',
+    );
+    const display = normalizeDisplaySettings(req.body);
+    const rdp = { ...session.connectionSettings, ...display };
+    session.connectionSettings = rdp;
+    return res.json(createPrimaryResponse(session, rdp));
   } catch (error) {
     return sendApiError(res, error);
   }
@@ -159,6 +174,7 @@ app.get('*', (req, res) => res.sendFile(path.join(publicPath, 'index.html')));
 const server = http.createServer(app);
 const guacdOptions = { host: GUACD_HOST, port: GUACD_PORT };
 const clientOptions = {
+  maxInactivityTime: GUACAMOLE_MAX_INACTIVITY_MS,
   crypt: { key: TOKEN_ENCRYPTION_KEY, cypher: 'aes-256-cbc' },
   connectionDefaultSettings: {
     join: {
@@ -219,7 +235,7 @@ guacServer.on('close', (clientConnection) => {
   const metadata = getConnectionMetadata(clientConnection);
   if (!metadata.sessionId || !metadata.role) return;
   if (metadata.role === 'primary') {
-    sessions.controllerClosed(metadata.sessionId);
+    sessions.controllerClosed(metadata.sessionId, clientConnection.guacamoleConnectionId);
     console.log(`[WebRDP] 主连接已关闭: ${metadata.sessionId}`);
   } else if (metadata.role === 'participant') {
     sessions.viewerClosed(metadata.sessionId, metadata.participantId);
@@ -245,7 +261,30 @@ server.listen(PORT, () => {
   console.log(`[WebRDP] 服务运行在 http://localhost:${PORT}`);
   console.log(`[WebRDP] guacd: ${GUACD_HOST}:${GUACD_PORT}`);
   console.log(`[WebRDP] 最大协作人数: ${MAX_VIEWERS + 1}`);
+  console.log(`[WebRDP] 主连接重连宽限: ${PRIMARY_RECONNECT_GRACE_MS}ms`);
 });
+
+function createPrimaryResponse(session, rdp) {
+  const token = encryptToken({
+    expiration: Date.now() + JOIN_TOKEN_TTL_MS,
+    sessionId: session.roomId,
+    participantId: session.primaryParticipantId,
+    participantSecret: session.primaryParticipantSecret,
+    role: 'primary',
+    connection: { type: 'rdp', settings: rdp },
+  });
+  return {
+    roomId: session.roomId,
+    participantId: session.primaryParticipantId,
+    participantSecret: session.primaryParticipantSecret,
+    ownerSecret: session.ownerSecret,
+    role: 'controller',
+    hasControl: true,
+    expiresAt: session.expiresAt,
+    reconnectGraceMs: PRIMARY_RECONNECT_GRACE_MS,
+    token,
+  };
+}
 
 function createParticipantResponse(roomId, displaySettings) {
   const join = sessions.createJoin(roomId);
@@ -360,7 +399,9 @@ function validateConnectionToken(settings) {
     throw apiError(404, '共享会话不存在或已结束');
   }
   if (role === 'primary') {
-    if (session.state !== 'creating') throw apiError(409, '主会话已经连接');
+    if (!['creating', 'reconnecting'].includes(session.state)) {
+      throw apiError(409, '主会话已经连接');
+    }
     sessions.authenticatePrimary(
       session,
       settings.participantId,

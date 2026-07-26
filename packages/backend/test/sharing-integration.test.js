@@ -52,21 +52,32 @@ function waitForClose(socket) {
   return new Promise((resolve) => socket.once('close', resolve));
 }
 
-test('a viewer joins the existing guacd connection in read-only mode', async (t) => {
+function identityHeaders(participant) {
+  return {
+    'x-participant-id': participant.participantId,
+    'x-participant-secret': participant.participantSecret,
+  };
+}
+
+test('same credential entry joins one session and temporary control returns to primary', async (t) => {
   const sharedConnectionId = '$fake-shared-connection';
   const selected = [];
   const handshakeReplies = [];
+  const postReadyMessages = [];
   let connectionNumber = 0;
 
   const fakeGuacd = net.createServer((socket) => {
     connectionNumber += 1;
-    const thisConnection = connectionNumber;
+    const connectionIndex = connectionNumber - 1;
     let transcript = '';
     let argsSent = false;
     let readySent = false;
+    postReadyMessages[connectionIndex] = '';
 
     socket.on('data', (chunk) => {
-      transcript += chunk.toString('utf8');
+      const data = chunk.toString('utf8');
+      if (readySent) postReadyMessages[connectionIndex] += data;
+      transcript += data;
       if (!argsSent && transcript.includes('6.select')) {
         selected.push(transcript.includes(sharedConnectionId) ? sharedConnectionId : 'rdp');
         socket.write(instruction([
@@ -87,7 +98,7 @@ test('a viewer joins the existing guacd connection in read-only mode', async (t)
         handshakeReplies.push(transcript);
         socket.write(instruction([
           'ready',
-          thisConnection === 1 ? sharedConnectionId : '$fake-viewer-connection',
+          connectionNumber === 1 ? sharedConnectionId : `$fake-participant-${connectionNumber}`,
         ]));
         readySent = true;
       }
@@ -110,11 +121,11 @@ test('a viewer joins the existing guacd connection in read-only mode', async (t)
     stdio: 'ignore',
   });
 
-  let controller;
-  let viewer;
+  let primarySocket;
+  let participantSocket;
   t.after(async () => {
-    controller?.close();
-    viewer?.close();
+    primarySocket?.close();
+    participantSocket?.close();
     child.kill();
     await new Promise((resolve) => fakeGuacd.close(resolve));
   });
@@ -124,58 +135,94 @@ test('a viewer joins the existing guacd connection in read-only mode', async (t)
     return response.ok;
   });
 
+  const connectionBody = {
+    host: '192.0.2.10',
+    user: 'test-user',
+    password: 'test-password',
+    width: 1024,
+    height: 768,
+  };
   const createResponse = await fetch(`http://127.0.0.1:${appPort}/api/sessions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      host: '192.0.2.10',
-      user: 'test-user',
-      password: 'test-password',
-      width: 1024,
-      height: 768,
-    }),
+    body: JSON.stringify(connectionBody),
   });
   assert.equal(createResponse.status, 201);
-  const created = await createResponse.json();
+  const primary = await createResponse.json();
+  assert.equal(primary.role, 'controller');
+  assert.equal(primary.hasControl, true);
 
-  controller = await openWebSocket(
-    `ws://127.0.0.1:${appPort}/?token=${encodeURIComponent(created.token)}`,
+  primarySocket = await openWebSocket(
+    `ws://127.0.0.1:${appPort}/?token=${encodeURIComponent(primary.token)}`,
   );
   await waitFor(async () => {
-    const response = await fetch(`http://127.0.0.1:${appPort}/api/sessions/${created.roomId}`);
+    const response = await fetch(`http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}`, {
+      headers: identityHeaders(primary),
+    });
     const session = await response.json();
-    return session.state === 'active';
+    return session.state === 'active' && session.hasControl;
   });
 
-  const joinResponse = await fetch(
-    `http://127.0.0.1:${appPort}/api/sessions/${created.roomId}/join`,
-    {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ width: 1280, height: 720 }),
-    },
-  );
+  const joinResponse = await fetch(`http://127.0.0.1:${appPort}/api/sessions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ...connectionBody, width: 1280, height: 720 }),
+  });
   assert.equal(joinResponse.status, 200);
-  const joined = await joinResponse.json();
-  viewer = await openWebSocket(
-    `ws://127.0.0.1:${appPort}/?token=${encodeURIComponent(joined.token)}`,
-  );
+  const participant = await joinResponse.json();
+  assert.equal(participant.role, 'viewer');
+  assert.equal(participant.roomId, primary.roomId);
 
+  participantSocket = await openWebSocket(
+    `ws://127.0.0.1:${appPort}/?token=${encodeURIComponent(participant.token)}`,
+  );
   await waitFor(async () => {
-    const response = await fetch(`http://127.0.0.1:${appPort}/api/sessions/${created.roomId}`);
+    const response = await fetch(`http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}`, {
+      headers: identityHeaders(participant),
+    });
     const session = await response.json();
     return session.viewerCount === 1;
   });
 
   assert.deepEqual(selected, ['rdp', sharedConnectionId]);
-  assert.match(handshakeReplies[1], /4.true/);
+  assert.doesNotMatch(handshakeReplies[1], /4.true/);
 
-  const controllerClosed = waitForClose(controller);
-  const viewerClosed = waitForClose(viewer);
+  const participantKey = instruction(['key', '1', '65']);
+  participantSocket.send(participantKey);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.doesNotMatch(postReadyMessages[1], /3.key/);
+
+  const takeResponse = await fetch(
+    `http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}/control`,
+    { method: 'POST', headers: identityHeaders(participant) },
+  );
+  assert.equal(takeResponse.status, 200);
+  assert.equal((await takeResponse.json()).hasControl, true);
+
+  participantSocket.send(participantKey);
+  await waitFor(() => postReadyMessages[1].includes('3.key'));
+
+  primarySocket.send(instruction(['key', '1', '66']));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.doesNotMatch(postReadyMessages[0], /3.key/);
+
+  const participantClosed = waitForClose(participantSocket);
+  participantSocket.close();
+  await participantClosed;
+  participantSocket = null;
+  await waitFor(async () => {
+    const response = await fetch(`http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}`, {
+      headers: identityHeaders(primary),
+    });
+    const session = await response.json();
+    return session.viewerCount === 0 && session.hasControl;
+  });
+
+  const primaryClosed = waitForClose(primarySocket);
   const deleteResponse = await fetch(
-    `http://127.0.0.1:${appPort}/api/sessions/${created.roomId}`,
-    { method: 'DELETE', headers: { 'x-owner-secret': created.ownerSecret } },
+    `http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}`,
+    { method: 'DELETE', headers: { 'x-owner-secret': primary.ownerSecret } },
   );
   assert.equal(deleteResponse.status, 204);
-  await Promise.all([controllerClosed, viewerClosed]);
+  await primaryClosed;
 });

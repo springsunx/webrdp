@@ -2,7 +2,7 @@
 
 ## 概述
 
-WebRDP 是基于 [Nexus Terminal](https://github.com/Heavrnl/nexus-terminal) 的轻量级 Web RDP 客户端，专注于 RDP 协议，支持 URL 参数快速连接。
+WebRDP 是基于 [Nexus Terminal](https://github.com/Heavrnl/nexus-terminal) 的轻量级 Web RDP 客户端，专注于 RDP 协议，支持统一凭据入口和同一 RDP 会话的多用户协作控制。
 
 ## 架构
 
@@ -14,7 +14,7 @@ WebRDP 是基于 [Nexus Terminal](https://github.com/Heavrnl/nexus-terminal) 的
        │                              │
        │                              │
        ▼                              ▼
-   URL 参数                    加密令牌 API
+  URL Fragment                  加密令牌 API
 ```
 
 ## 快速部署
@@ -36,9 +36,9 @@ cd webrdp
 docker-compose up -d
 ```
 
-3. **访问应用（URL 只预填非敏感参数，密码在页面输入）**
+3. **访问应用（统一协作入口）**
 ```
-http://localhost:3000?host=YOUR_RDP_HOST&port=3389&user=YOUR_USER
+http://localhost:3000/#host=YOUR_RDP_HOST&port=3389&user=YOUR_USER&password=YOUR_PASSWORD
 ```
 
 ### 方法二：本地开发
@@ -89,19 +89,20 @@ FRONTEND_PORT=3000        # 前端端口
 FRONTEND_URL=http://localhost:3000  # 前端 URL
 ```
 
-## URL 参数说明
+## Fragment 参数说明
 
 | 参数 | 必填 | 默认值 | 描述 |
 |------|------|--------|------|
 | `host` | ✅ | - | 远程主机 IP 或域名 |
 | `port` | ❌ | 3389 | RDP 端口 |
 | `user` | ✅ | - | 用户名 |
+| `password` | ✅ | - | 密码，仅放在 URL Fragment 中 |
 | `width` | ❌ | 1024 | 屏幕宽度 |
 | `height` | ❌ | 768 | 屏幕高度 |
 
 **示例 URL**：
 ```
-http://localhost:3000?host=192.168.1.100&port=3389&user=admin&width=1920&height=1080
+http://localhost:3000/#host=192.168.1.100&port=3389&user=admin&password=YOUR_PASSWORD&width=1920&height=1080
 ```
 
 ## 与反向代理集成
@@ -137,9 +138,9 @@ server {
 ## 安全注意事项
 
 ### 1. 密码安全
-- URL 中的密码可能被记录在浏览器历史中
-- 仅在内网或可信环境中使用
-- 考虑使用其他认证方式（如令牌）
+- 密码放在 # 后，Fragment 不会发送到 Web 服务器或反向代理日志
+- 统一入口仍包含有效 Windows 凭据，只能发送给受信任人员
+- 必须使用 HTTPS；生产环境建议改用一次性令牌并增加身份认证
 
 ### 2. 网络安全
 - 确保 RDP 服务器仅对必要网络开放

@@ -1,6 +1,6 @@
 # WebRDP
 
-基于 [Nexus Terminal](https://github.com/Heavrnl/nexus-terminal) 的轻量级 Web RDP 客户端，专注于 RDP 协议，支持 URL 参数快速连接。
+基于 [Nexus Terminal](https://github.com/Heavrnl/nexus-terminal) 的轻量级 Web RDP 客户端，专注于 RDP 协议，支持同一 RDP 会话的多用户协作与控制权交接。
 
 [![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white)](https://www.docker.com/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -9,9 +9,9 @@
 ## ✨ 功能特点
 
 - 🚀 **轻量级**：移除了 SSH、VNC、SFTP 等不需要的功能
-- 🔗 **URL 参数支持**：通过 URL 直接连接，便于集成
+- 🔗 **统一入口链接**：相同凭据自动进入同一 RDP 会话
 - 🐳 **Docker 部署**：前后端合并，一键部署，开箱即用
-- 🖥️ **输入界面**：美观的连接界面，支持记住密码
+- 👥 **协作控制**：首位用户主控，后续用户可临时接管并自动归还
 - 📱 **响应式设计**：支持手机、平板、桌面多种设备
 - 🖱️ **鼠标操作**：支持左键、右键、滚轮
 
@@ -31,10 +31,10 @@ docker compose up -d
 http://localhost:3000
 ```
 
-### URL 参数预填（密码仍需手动输入）
+### 统一协作入口
 
 ```
-http://localhost:3000?host=YOUR_RDP_HOST&port=3389&user=YOUR_USER
+http://localhost:3000/#host=YOUR_RDP_HOST&port=3389&user=YOUR_USER&password=YOUR_PASSWORD
 ```
 
 ## 📖 使用说明
@@ -47,21 +47,22 @@ http://localhost:3000?host=YOUR_RDP_HOST&port=3389&user=YOUR_USER
 - 勾选"记住连接信息"（可选，不保存密码）
 - 点击"连接"按钮
 
-### 2. URL 参数访问
+### 2. 统一入口访问
 
-URL 只用于预填非敏感参数，打开页面后仍需手动输入密码：
+完整凭据放在 URL Fragment（# 后）。第一个用户成为主用户，后续用户自动观看并可点击接管：
 
 ```
-http://localhost:3000?host=192.168.1.100&port=3389&user=admin&width=1920&height=1080&title=我的电脑
+http://localhost:3000/#host=192.168.1.100&port=3389&user=admin&password=YOUR_PASSWORD&width=1920&height=1080&title=我的电脑
 ```
 
-### 3. URL 参数说明
+### 3. Fragment 参数说明
 
 | 参数 | 必填 | 默认值 | 描述 |
 |------|------|--------|------|
 | `host` | ✅ | - | RDP服务器IP或域名 |
 | `port` | ❌ | 3389 | RDP端口 |
 | `user` | ✅ | - | 用户名 |
+| `password` | ✅ | - | 密码，仅建议放在 URL Fragment 中 |
 | `width` | ❌ | 自动计算 | 屏幕宽度 |
 | `height` | ❌ | 自动计算 | 屏幕高度 |
 | `title` | ❌ | WebRDP | 页面标题 |
@@ -146,7 +147,7 @@ webrdp/
 
 - [输入界面使用说明](INPUT_FORM.md)
 - [部署指南](DEPLOYMENT.md)
-- [多用户共享观看](SHARING.md)
+- [多用户协作控制](SHARING.md)
 
 ## 🔧 故障排除
 

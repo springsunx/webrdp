@@ -6,8 +6,10 @@ class WebRDPLite {
         this.mouse = null;
         this.connectionStatus = 'disconnected';
         this.connectionParams = {};
-        this.role = 'controller';
+        this.role = 'pending';
+        this.hasControl = false;
         this.session = null;
+        this.entryLink = '';
         this.sessionPollTimer = null;
         this.storageKey = 'webrdp-params';
         this.backendUrl = `${window.location.protocol}//${window.location.host}`;
@@ -52,7 +54,10 @@ class WebRDPLite {
         this.copyShareBtn = document.getElementById('copy-share-btn');
         this.endShareBtn = document.getElementById('end-share-btn');
         this.viewerCount = document.getElementById('viewer-count');
-        this.viewerBanner = document.getElementById('viewer-banner');
+        this.permissionBar = document.getElementById('permission-bar');
+        this.controlState = document.getElementById('control-state');
+        this.takeControlBtn = document.getElementById('take-control-btn');
+        this.releaseControlBtn = document.getElementById('release-control-btn');
     }
 
     initEventListeners() {
@@ -67,13 +72,16 @@ class WebRDPLite {
         this.resizeBtn.addEventListener('click', () => this.resizeDisplay());
         this.copyShareBtn.addEventListener('click', () => this.copyShareLink());
         this.endShareBtn.addEventListener('click', () => this.leaveSession(false));
+        this.takeControlBtn.addEventListener('click', () => this.takeControl());
+        this.releaseControlBtn.addEventListener('click', () => this.releaseControl());
         window.addEventListener('resize', () => this.adjustDisplaySize());
-        window.addEventListener('beforeunload', () => this.endOwnedSession(true));
+        window.addEventListener('beforeunload', () => this.handleBeforeUnload());
     }
 
     initialize() {
-        const params = new URLSearchParams(window.location.search);
-        const roomId = params.get('room');
+        const queryParams = new URLSearchParams(window.location.search);
+        const fragmentParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+        const roomId = queryParams.get('room');
         const autoSize = this.calculateOptimalResolution();
 
         if (roomId) {
@@ -82,29 +90,43 @@ class WebRDPLite {
             this.connectionParams = {
                 host: '共享会话',
                 port: '-',
-                user: '只读观看者',
+                user: '协作参与者',
                 width: String(autoSize.width),
                 height: String(autoSize.height),
             };
-            this.setTitle('WebRDP 共享观看');
+            this.setTitle('WebRDP 协作会话');
             this.showDesktop();
             setTimeout(() => this.connect(), 50);
             return;
         }
 
         this.loadSavedParams();
-        this.hostInput.value = params.get('host') || this.hostInput.value;
-        this.portInput.value = params.get('port') || this.portInput.value || '3389';
-        this.userInput.value = params.get('user') || this.userInput.value;
-        this.widthInput.value = params.get('width') || String(autoSize.width);
-        this.heightInput.value = params.get('height') || String(autoSize.height);
-        this.setTitle(params.get('title') || 'WebRDP');
+        const source = fragmentParams.has('host') ? fragmentParams : queryParams;
+        const host = source.get('host') || this.hostInput.value;
+        const port = source.get('port') || this.portInput.value || '3389';
+        const user = source.get('user') || this.userInput.value;
+        const password = source.get('password') || '';
+        const width = source.get('width') || String(autoSize.width);
+        const height = source.get('height') || String(autoSize.height);
+        const title = source.get('title') || 'WebRDP';
 
-        if (params.has('password')) {
-            params.delete('password');
-            const safeUrl = `${window.location.pathname}${params.toString() ? `?${params}` : ''}`;
-            window.history.replaceState({}, '', safeUrl);
+        this.hostInput.value = host;
+        this.portInput.value = port;
+        this.userInput.value = user;
+        this.widthInput.value = width;
+        this.heightInput.value = height;
+        this.setTitle(title);
+
+        if (host && user && password) {
+            this.connectionParams = { host, port, user, password, width, height, title };
+            this.entryLink = this.buildEntryLink(this.connectionParams);
+            this.clearSensitiveLocation();
+            this.showDesktop();
+            setTimeout(() => this.connect(), 50);
+            return;
         }
+
+        if (queryParams.has('password') || window.location.hash) this.clearSensitiveLocation();
     }
 
     getWebSocketUrl() {
@@ -164,7 +186,8 @@ class WebRDPLite {
             return;
         }
 
-        this.role = 'controller';
+        this.role = 'pending';
+        this.hasControl = false;
         this.session = null;
         this.connectionParams = {
             host,
@@ -173,20 +196,35 @@ class WebRDPLite {
             password,
             width: this.widthInput.value.trim() || '1024',
             height: this.heightInput.value.trim() || '768',
+            title: document.getElementById('page-title').textContent || 'WebRDP',
         };
+        this.entryLink = this.buildEntryLink(this.connectionParams);
+        this.passwordInput.value = '';
         this.saveParams();
-
-        const safeUrl = new URL(window.location.href);
-        safeUrl.search = '';
-        safeUrl.searchParams.set('host', host);
-        safeUrl.searchParams.set('port', this.connectionParams.port);
-        safeUrl.searchParams.set('user', user);
-        safeUrl.searchParams.set('width', this.connectionParams.width);
-        safeUrl.searchParams.set('height', this.connectionParams.height);
-        window.history.replaceState({}, '', safeUrl);
-
+        this.clearSensitiveLocation();
         this.showDesktop();
         setTimeout(() => this.connect(), 50);
+    }
+
+    buildEntryLink(params) {
+        const url = new URL(window.location.origin + window.location.pathname);
+        const fragment = new URLSearchParams();
+        fragment.set('host', params.host);
+        fragment.set('port', params.port || '3389');
+        fragment.set('user', params.user);
+        fragment.set('password', params.password);
+        fragment.set('width', params.width || '1024');
+        fragment.set('height', params.height || '768');
+        if (params.title && params.title !== 'WebRDP') fragment.set('title', params.title);
+        url.hash = fragment.toString();
+        return url.toString();
+    }
+
+    clearSensitiveLocation() {
+        const safeUrl = new URL(window.location.href);
+        safeUrl.searchParams.delete('password');
+        safeUrl.hash = '';
+        window.history.replaceState({}, '', safeUrl);
     }
 
     showDesktop() {
@@ -197,20 +235,21 @@ class WebRDPLite {
         this.footerUser.textContent = this.connectionParams.user || '-';
         this.footerWidth.value = this.connectionParams.width;
         this.footerHeight.value = this.connectionParams.height;
-        this.shareBar.style.display = this.role === 'controller' ? 'flex' : 'none';
-        this.viewerBanner.style.display = this.role === 'viewer' ? 'block' : 'none';
-        this.resolutionControls.style.display = this.role === 'controller' ? 'flex' : 'none';
+        this.permissionBar.style.display = 'flex';
+        this.applyPermissionState();
     }
 
     async connect() {
-        if (this.role === 'controller' &&
-            (!this.connectionParams.host || !this.connectionParams.user || !this.connectionParams.password)) {
+        const credentialEntry = Boolean(
+            this.connectionParams.host && this.connectionParams.user && this.connectionParams.password,
+        );
+        if (!credentialEntry && !this.session?.roomId) {
             this.updateStatus('error', '缺少连接参数');
             return;
         }
 
         this.disconnectTunnel();
-        this.updateStatus('connecting', this.role === 'viewer' ? '正在加入共享会话...' : '正在连接...');
+        this.updateStatus('connecting', credentialEntry ? '正在加入或创建协作会话...' : '正在加入共享会话...');
 
         try {
             const token = await this.getToken();
@@ -230,16 +269,11 @@ class WebRDPLite {
             this.guacClient.onerror = (status) => {
                 this.updateStatus('error', status.message || '远程连接错误');
             };
-            if (this.role === 'controller') {
-                this.guacClient.onclipboard = (stream, mimetype) => this.handleClipboard(stream, mimetype);
-            }
+            this.guacClient.onclipboard = (stream, mimetype) => this.handleClipboard(stream, mimetype);
 
             this.guacClient.connect('');
-            if (this.role === 'controller') {
-                this.setupInputListeners();
-            } else {
-                displayElement.style.cursor = 'default';
-            }
+            this.setupInputListeners();
+            this.applyPermissionState();
             this.startSessionPolling();
         } catch (error) {
             this.updateStatus('error', error.message || '连接失败');
@@ -247,39 +281,55 @@ class WebRDPLite {
     }
 
     async getToken() {
-        if (this.role === 'viewer') {
-            const data = await this.fetchJson(`/api/sessions/${encodeURIComponent(this.session.roomId)}/join`, {
+        let data;
+        const credentialEntry = Boolean(this.connectionParams.password);
+        if (!credentialEntry && this.session?.roomId) {
+            data = await this.fetchJson(`/api/sessions/${encodeURIComponent(this.session.roomId)}/join`, {
                 method: 'POST',
                 body: JSON.stringify({
                     width: Number(this.connectionParams.width),
                     height: Number(this.connectionParams.height),
                 }),
             });
-            this.session.participantId = data.participantId;
-            return data.token;
+        } else {
+            data = await this.openCredentialSession();
         }
 
-        const data = await this.fetchJson('/api/sessions', {
-            method: 'POST',
-            body: JSON.stringify({
-                host: this.connectionParams.host,
-                port: Number(this.connectionParams.port),
-                user: this.connectionParams.user,
-                password: this.connectionParams.password,
-                width: Number(this.connectionParams.width),
-                height: Number(this.connectionParams.height),
-            }),
-        });
+        this.role = data.role;
+        this.hasControl = Boolean(data.hasControl);
         this.session = {
             roomId: data.roomId,
+            participantId: data.participantId,
+            participantSecret: data.participantSecret,
             ownerSecret: data.ownerSecret,
             expiresAt: data.expiresAt,
         };
-        const shareUrl = new URL(window.location.origin + window.location.pathname);
-        shareUrl.searchParams.set('room', data.roomId);
-        this.shareLinkInput.value = shareUrl.toString();
-        this.viewerCount.textContent = '0 位观看者';
+        if (this.role === 'controller') {
+            this.shareLinkInput.value = this.entryLink || this.buildEntryLink(this.connectionParams);
+            this.viewerCount.textContent = '0 位参与者';
+        }
+        this.showDesktop();
         return data.token;
+    }
+
+    async openCredentialSession() {
+        const body = JSON.stringify({
+            host: this.connectionParams.host,
+            port: Number(this.connectionParams.port),
+            user: this.connectionParams.user,
+            password: this.connectionParams.password,
+            width: Number(this.connectionParams.width),
+            height: Number(this.connectionParams.height),
+        });
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+            try {
+                return await this.fetchJson('/api/sessions', { method: 'POST', body });
+            } catch (error) {
+                if (error.status !== 409 || !error.data?.retryAfterMs) throw error;
+                await new Promise((resolve) => setTimeout(resolve, error.data.retryAfterMs));
+            }
+        }
+        throw new Error('主连接建立超时，请重试');
     }
 
     async fetchJson(path, options = {}) {
@@ -288,16 +338,30 @@ class WebRDPLite {
             headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
         });
         const data = response.status === 204 ? null : await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data?.error || `请求失败 (${response.status})`);
+        if (!response.ok) {
+            const error = new Error(data?.error || `请求失败 (${response.status})`);
+            error.status = response.status;
+            error.data = data;
+            throw error;
+        }
         return data;
     }
 
+    identityHeaders() {
+        if (!this.session?.participantId || !this.session?.participantSecret) return {};
+        return {
+            'x-participant-id': this.session.participantId,
+            'x-participant-secret': this.session.participantSecret,
+        };
+    }
+
     handleStateChange(state) {
+        const connectedMessage = this.hasControl ? '已连接 · 可操作' : '已连接 · 观看中';
         const states = {
             0: ['disconnected', '空闲'],
             1: ['connecting', '正在连接...'],
             2: ['connecting', '等待远程桌面...'],
-            3: ['connected', this.role === 'viewer' ? '只读观看中' : '已连接'],
+            3: ['connected', connectedMessage],
             4: ['disconnected', '正在断开...'],
             5: ['disconnected', '已断开'],
         };
@@ -316,7 +380,7 @@ class WebRDPLite {
     }
 
     setupInputListeners() {
-        if (!this.guacClient || this.role !== 'controller') return;
+        if (!this.guacClient || this.keyboard || this.mouse) return;
         const displayElement = this.guacClient.getDisplay().getElement();
         displayElement.tabIndex = 0;
         const useTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
@@ -324,24 +388,59 @@ class WebRDPLite {
             ? new Guacamole.Mouse.Touchscreen(displayElement)
             : new Guacamole.Mouse(displayElement);
         this.mouse.onmousedown = this.mouse.onmouseup = this.mouse.onmousemove = (state) => {
-            if (this.guacClient && this.role === 'controller') this.guacClient.sendMouseState(state);
+            if (this.guacClient && this.hasControl) this.guacClient.sendMouseState(state);
         };
         this.keyboard = new Guacamole.Keyboard(displayElement);
         this.keyboard.onkeydown = (keysym) => {
-            if (this.guacClient && this.role === 'controller') this.guacClient.sendKeyEvent(1, keysym);
+            if (this.guacClient && this.hasControl) this.guacClient.sendKeyEvent(1, keysym);
         };
         this.keyboard.onkeyup = (keysym) => {
-            if (this.guacClient && this.role === 'controller') this.guacClient.sendKeyEvent(0, keysym);
+            if (this.guacClient && this.hasControl) this.guacClient.sendKeyEvent(0, keysym);
         };
-        displayElement.focus();
+        if (this.hasControl) displayElement.focus();
     }
 
     handleClipboard(stream, mimetype) {
-        if (this.role !== 'controller' || mimetype !== 'text/plain') return;
+        if (!this.hasControl || mimetype !== 'text/plain') return;
         const reader = new Guacamole.StringReader(stream);
         let text = '';
         reader.ontext = (chunk) => { text += chunk; };
         reader.onend = () => navigator.clipboard.writeText(text).catch(() => {});
+    }
+
+    applyPermissionState(data = null) {
+        if (data) this.hasControl = Boolean(data.hasControl);
+        const controlOwner = data?.controlOwner || (this.hasControl && this.role === 'controller' ? 'primary' : null);
+        const isPrimary = this.role === 'controller';
+
+        this.shareBar.style.display = isPrimary ? 'flex' : 'none';
+        this.takeControlBtn.style.display = !isPrimary && !this.hasControl ? 'inline-block' : 'none';
+        this.releaseControlBtn.style.display = !isPrimary && this.hasControl ? 'inline-block' : 'none';
+        this.resolutionControls.style.display = this.hasControl ? 'flex' : 'none';
+        this.permissionBar.classList.toggle('has-control', this.hasControl);
+
+        if (this.role === 'pending') {
+            this.controlState.textContent = '正在分配协作身份...';
+        } else if (isPrimary && this.hasControl) {
+            this.controlState.textContent = '主用户 · 当前可操作';
+        } else if (isPrimary) {
+            this.controlState.textContent = '临时用户正在操作 · 主用户输入已锁定';
+        } else if (this.hasControl) {
+            this.controlState.textContent = '临时控制中 · 结束后将自动归还主用户';
+        } else if (controlOwner === 'participant') {
+            this.controlState.textContent = '其他参与者正在操作 · 当前为观看模式';
+        } else {
+            this.controlState.textContent = '主用户正在操作 · 当前为观看模式';
+        }
+
+        const displayElement = this.guacClient?.getDisplay().getElement();
+        if (displayElement) {
+            displayElement.style.cursor = this.hasControl ? 'default' : 'not-allowed';
+            if (this.hasControl) displayElement.focus();
+        }
+        if (this.connectionStatus === 'connected') {
+            this.updateStatus('connected', this.hasControl ? '已连接 · 可操作' : '已连接 · 观看中');
+        }
     }
 
     adjustDisplaySize() {
@@ -355,7 +454,7 @@ class WebRDPLite {
     }
 
     resizeDisplay() {
-        if (!this.guacClient || this.role !== 'controller') return;
+        if (!this.guacClient || !this.hasControl) return;
         const width = Math.max(800, Number(this.footerWidth.value) || 1024);
         const height = Math.max(600, Number(this.footerHeight.value) || 768);
         this.connectionParams.width = String(width);
@@ -369,20 +468,53 @@ class WebRDPLite {
         if (!this.session?.roomId) return;
         const poll = async () => {
             try {
-                const data = await this.fetchJson(`/api/sessions/${encodeURIComponent(this.session.roomId)}`);
+                const data = await this.fetchJson(
+                    `/api/sessions/${encodeURIComponent(this.session.roomId)}`,
+                    { headers: this.identityHeaders() },
+                );
+                this.applyPermissionState(data);
                 if (this.role === 'controller') {
-                    this.viewerCount.textContent = `${data.viewerCount} / ${data.maxViewers} 位观看者`;
+                    this.viewerCount.textContent = `${data.viewerCount} / ${data.maxViewers} 位参与者`;
                 }
             } catch (error) {
                 clearInterval(this.sessionPollTimer);
-                if (this.role === 'viewer' && this.connectionStatus === 'connected') {
+                if (this.connectionStatus === 'connected') {
                     this.disconnectTunnel();
-                    this.updateStatus('error', '共享会话已结束');
+                    this.updateStatus('error', '协作会话已结束或身份已失效');
                 }
             }
         };
-        this.sessionPollTimer = setInterval(poll, 3000);
+        this.sessionPollTimer = setInterval(poll, 1000);
         poll();
+    }
+
+    async takeControl() {
+        if (this.role === 'controller' || !this.session?.roomId || this.hasControl) return;
+        this.takeControlBtn.disabled = true;
+        try {
+            const data = await this.fetchJson(
+                `/api/sessions/${encodeURIComponent(this.session.roomId)}/control`,
+                { method: 'POST', headers: this.identityHeaders(), body: '{}' },
+            );
+            this.applyPermissionState(data);
+        } catch (error) {
+            this.showError(error.message);
+        } finally {
+            this.takeControlBtn.disabled = false;
+        }
+    }
+
+    async releaseControl(keepalive = false) {
+        if (this.role === 'controller' || !this.session?.roomId || !this.hasControl) return;
+        try {
+            const response = await fetch(
+                `${this.backendUrl}/api/sessions/${encodeURIComponent(this.session.roomId)}/control`,
+                { method: 'DELETE', headers: this.identityHeaders(), keepalive },
+            );
+            if (!keepalive && response.ok) this.applyPermissionState(await response.json());
+        } catch (error) {
+            if (!keepalive) this.showError(error.message || '归还控制权失败');
+        }
     }
 
     async copyShareLink() {
@@ -404,16 +536,24 @@ class WebRDPLite {
                 keepalive,
             });
         } catch (error) {
-            console.warn('Failed to end shared session', error);
+            console.warn('Failed to end collaborative session', error);
         }
     }
 
+    handleBeforeUnload() {
+        if (this.role === 'controller') this.endOwnedSession(true);
+        else this.releaseControl(true);
+    }
+
     async leaveSession(showLogin) {
-        await this.endOwnedSession();
+        if (this.role === 'controller') await this.endOwnedSession();
+        else await this.releaseControl();
         this.disconnectTunnel();
         if (showLogin) {
-            this.role = 'controller';
+            this.role = 'pending';
+            this.hasControl = false;
             this.session = null;
+            this.connectionParams.password = '';
             this.loginContainer.style.display = 'flex';
             this.desktopContainer.style.display = 'none';
             window.history.replaceState({}, '', window.location.pathname);
@@ -422,7 +562,10 @@ class WebRDPLite {
 
     async reconnect() {
         if (this.role === 'controller') await this.endOwnedSession();
+        else await this.releaseControl();
         this.disconnectTunnel();
+        this.role = 'pending';
+        this.hasControl = false;
         setTimeout(() => this.connect(), 100);
     }
 

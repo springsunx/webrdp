@@ -26,7 +26,11 @@ const JOIN_TOKEN_TTL_MS = parseInteger(
 const MAX_VIEWERS = parseInteger(process.env.MAX_VIEWERS, 20, 1, 500);
 const TOKEN_ENCRYPTION_KEY = loadEncryptionKey();
 
-const sessions = new SessionManager({ ttlMs: SESSION_TTL_MS, maxViewers: MAX_VIEWERS });
+const sessions = new SessionManager({
+  ttlMs: SESSION_TTL_MS,
+  maxViewers: MAX_VIEWERS,
+  pendingTtlMs: JOIN_TOKEN_TTL_MS,
+});
 
 const app = express();
 app.disable('x-powered-by');
@@ -52,52 +56,86 @@ app.get('/api/health', (req, res) => {
 app.post('/api/sessions', (req, res) => {
   try {
     const rdp = normalizeRdpSettings(req.body);
-    const session = sessions.create();
+    const connectionKey = createConnectionKey(rdp);
+    const opened = sessions.openOrCreate(connectionKey);
+
+    if (!opened.created) {
+      if (opened.session.state === 'creating') {
+        return res.status(409).json({ error: '主连接正在建立，请稍后重试', retryAfterMs: 500 });
+      }
+      return res.json(createParticipantResponse(opened.session.roomId, req.body));
+    }
+
+    const session = opened.session;
     const token = encryptToken({
       expiration: Date.now() + JOIN_TOKEN_TTL_MS,
       sessionId: session.roomId,
-      role: 'controller',
+      participantId: session.primaryParticipantId,
+      participantSecret: session.primaryParticipantSecret,
+      role: 'primary',
       connection: { type: 'rdp', settings: rdp },
     });
-    res.status(201).json({
+    return res.status(201).json({
       roomId: session.roomId,
+      participantId: session.primaryParticipantId,
+      participantSecret: session.primaryParticipantSecret,
       ownerSecret: session.ownerSecret,
+      role: 'controller',
+      hasControl: true,
       expiresAt: session.expiresAt,
       token,
     });
   } catch (error) {
-    sendApiError(res, error);
+    return sendApiError(res, error);
   }
 });
 
 app.get('/api/sessions/:roomId', (req, res) => {
-  const session = sessions.getPublic(req.params.roomId);
-  if (!session) return res.status(404).json({ error: '共享会话不存在或已结束' });
-  return res.json(session);
+  try {
+    const identity = readParticipantIdentity(req);
+    const session = sessions.getPublic(
+      req.params.roomId,
+      identity.participantId,
+      identity.participantSecret,
+    );
+    if (!session) return res.status(404).json({ error: '共享会话不存在或已结束' });
+    return res.json(session);
+  } catch (error) {
+    return sendApiError(res, error);
+  }
 });
 
 app.post('/api/sessions/:roomId/join', (req, res) => {
   try {
-    const join = sessions.createJoin(req.params.roomId);
-    const display = normalizeDisplaySettings(req.body);
-    const token = encryptToken({
-      expiration: Date.now() + JOIN_TOKEN_TTL_MS,
-      sessionId: join.roomId,
-      participantId: join.participantId,
-      role: 'viewer',
-      connection: {
-        join: join.guacdConnectionId,
-        settings: { ...display, 'read-only': true },
-      },
-    });
-    res.json({
-      roomId: join.roomId,
-      participantId: join.participantId,
-      expiresAt: join.expiresAt,
-      token,
-    });
+    return res.json(createParticipantResponse(req.params.roomId, req.body));
   } catch (error) {
-    sendApiError(res, error);
+    return sendApiError(res, error);
+  }
+});
+
+app.post('/api/sessions/:roomId/control', (req, res) => {
+  try {
+    const identity = readParticipantIdentity(req, true);
+    return res.json(sessions.takeControl(
+      req.params.roomId,
+      identity.participantId,
+      identity.participantSecret,
+    ));
+  } catch (error) {
+    return sendApiError(res, error);
+  }
+});
+
+app.delete('/api/sessions/:roomId/control', (req, res) => {
+  try {
+    const identity = readParticipantIdentity(req, true);
+    return res.json(sessions.releaseControl(
+      req.params.roomId,
+      identity.participantId,
+      identity.participantSecret,
+    ));
+  } catch (error) {
+    return sendApiError(res, error);
   }
 });
 
@@ -105,9 +143,9 @@ app.delete('/api/sessions/:roomId', (req, res) => {
   try {
     sessions.end(req.params.roomId, req.get('x-owner-secret') || '');
     closeSessionConnections(req.params.roomId);
-    res.status(204).end();
+    return res.status(204).end();
   } catch (error) {
-    sendApiError(res, error);
+    return sendApiError(res, error);
   }
 });
 
@@ -148,25 +186,36 @@ guacServer.on('open', (clientConnection) => {
   const metadata = getConnectionMetadata(clientConnection);
   if (!metadata.sessionId || !metadata.role) return;
   try {
-    if (metadata.role === 'controller') {
-      sessions.activate(metadata.sessionId, clientConnection.guacamoleConnectionId);
-      console.log(`[WebRDP] 共享会话已激活: ${metadata.sessionId}`);
-    } else if (metadata.role === 'viewer') {
-      sessions.viewerOpened(metadata.sessionId, metadata.participantId);
-      console.log(`[WebRDP] 观看者已加入: ${metadata.sessionId}`);
+    if (metadata.role === 'primary') {
+      sessions.activate(
+        metadata.sessionId,
+        clientConnection.guacamoleConnectionId,
+        metadata.participantId,
+        metadata.participantSecret,
+      );
+      console.log(`[WebRDP] 主会话已激活: ${metadata.sessionId}`);
+    } else if (metadata.role === 'participant') {
+      sessions.viewerOpened(
+        metadata.sessionId,
+        metadata.participantId,
+        metadata.participantSecret,
+      );
+      console.log(`[WebRDP] 协作参与者已加入: ${metadata.sessionId}`);
     }
+    installInputGuard(clientConnection, metadata);
   } catch (error) {
     console.error('[WebRDP] 更新会话打开状态失败:', error);
+    clientConnection.close(error);
   }
 });
 
 guacServer.on('close', (clientConnection) => {
   const metadata = getConnectionMetadata(clientConnection);
   if (!metadata.sessionId || !metadata.role) return;
-  if (metadata.role === 'controller') {
+  if (metadata.role === 'primary') {
     sessions.controllerClosed(metadata.sessionId);
     console.log(`[WebRDP] 主连接已关闭: ${metadata.sessionId}`);
-  } else if (metadata.role === 'viewer') {
+  } else if (metadata.role === 'participant') {
     sessions.viewerClosed(metadata.sessionId, metadata.participantId);
   }
 });
@@ -188,14 +237,76 @@ cleanupTimer.unref();
 server.listen(PORT, () => {
   console.log(`[WebRDP] 服务运行在 http://localhost:${PORT}`);
   console.log(`[WebRDP] guacd: ${GUACD_HOST}:${GUACD_PORT}`);
-  console.log(`[WebRDP] 最大观看人数: ${MAX_VIEWERS}`);
+  console.log(`[WebRDP] 最大协作人数: ${MAX_VIEWERS + 1}`);
 });
+
+function createParticipantResponse(roomId, displaySettings) {
+  const join = sessions.createJoin(roomId);
+  const display = normalizeDisplaySettings(displaySettings);
+  const token = encryptToken({
+    expiration: Date.now() + JOIN_TOKEN_TTL_MS,
+    sessionId: join.roomId,
+    participantId: join.participantId,
+    participantSecret: join.participantSecret,
+    role: 'participant',
+    connection: {
+      join: join.guacdConnectionId,
+      settings: { ...display, 'read-only': false },
+    },
+  });
+  return {
+    roomId: join.roomId,
+    participantId: join.participantId,
+    participantSecret: join.participantSecret,
+    role: 'viewer',
+    hasControl: false,
+    expiresAt: join.expiresAt,
+    token,
+  };
+}
 
 function closeSessionConnections(roomId) {
   for (const connection of guacServer.activeConnections.values()) {
     if (getConnectionMetadata(connection).sessionId === roomId) connection.close();
   }
 }
+
+function installInputGuard(clientConnection, metadata) {
+  const forwardToGuacd = clientConnection.sendMessageToGuacd.bind(clientConnection);
+  clientConnection.sendMessageToGuacd = (message) => {
+    if (sessions.hasControl(metadata.sessionId, metadata.participantId)
+      || isPassiveClientMessage(message)) {
+      forwardToGuacd(message);
+    }
+  };
+}
+
+function isPassiveClientMessage(message) {
+  const opcodes = parseInstructionOpcodes(message);
+  return opcodes.length > 0
+    && opcodes.every((opcode) => ['ack', 'disconnect', 'nop', 'sync'].includes(opcode));
+}
+
+function parseInstructionOpcodes(message) {
+  const text = Buffer.isBuffer(message) ? message.toString('utf8') : String(message);
+  const opcodes = [];
+  let position = 0;
+  while (position < text.length) {
+    const dot = text.indexOf('.', position);
+    if (dot < 0) return [];
+    const elementLength = Number.parseInt(text.slice(position, dot), 10);
+    if (!Number.isInteger(elementLength) || elementLength < 0) return [];
+    const opcodeStart = dot + 1;
+    const opcodeEnd = opcodeStart + elementLength;
+    if (opcodeEnd > text.length) return [];
+    opcodes.push(text.slice(opcodeStart, opcodeEnd));
+    const instructionEnd = text.indexOf(';', opcodeEnd);
+    if (instructionEnd < 0) return [];
+    position = instructionEnd + 1;
+  }
+  return opcodes;
+}
+
 function validateConnectionToken(settings) {
   if (!settings || !Number.isFinite(Number(settings.expiration))) {
     throw apiError(401, '连接令牌缺少有效期');
@@ -204,7 +315,7 @@ function validateConnectionToken(settings) {
 
   const sessionId = settings.sessionId;
   const role = settings.role;
-  if (!sessionId || !['controller', 'viewer'].includes(role)) {
+  if (!sessionId || !['primary', 'participant'].includes(role)) {
     throw apiError(401, '连接令牌缺少会话身份');
   }
 
@@ -212,20 +323,23 @@ function validateConnectionToken(settings) {
   if (!session || session.state === 'closed' || session.expiresAt <= Date.now()) {
     throw apiError(404, '共享会话不存在或已结束');
   }
-  if (role === 'controller' && session.state !== 'creating') {
-    throw apiError(409, '主会话已经连接');
+  if (role === 'primary') {
+    if (session.state !== 'creating') throw apiError(409, '主会话已经连接');
+    sessions.authenticatePrimary(
+      session,
+      settings.participantId,
+      settings.participantSecret,
+    );
   }
-  if (role === 'viewer') {
+  if (role === 'participant') {
     if (session.state !== 'active') throw apiError(409, '共享会话尚未就绪');
-    if (!settings.participantId || !session.pendingViewers.has(settings.participantId)) {
-      throw apiError(401, '观看令牌无效或已被使用');
+    const pending = session.pendingViewers.get(settings.participantId);
+    if (!pending || !sessions.safeEqual(pending.participantSecret, settings.participantSecret)) {
+      throw apiError(401, '参与者令牌无效或已被使用');
     }
-    if (
-      !settings.connection ||
-      settings.connection.join !== session.guacdConnectionId ||
-      settings.connection?.['read-only'] !== true
-    ) {
-      throw apiError(403, '观看连接必须为只读 Join 会话');
+    if (!settings.connection || settings.connection.join !== session.guacdConnectionId
+      || [true, 'true'].includes(settings.connection?.['read-only'])) {
+      throw apiError(403, '参与者必须加入现有 Guacamole 会话');
     }
   }
 }
@@ -235,8 +349,32 @@ function getConnectionMetadata(clientConnection) {
   return {
     sessionId: settings.sessionId,
     participantId: settings.participantId,
+    participantSecret: settings.participantSecret,
     role: settings.role,
   };
+}
+
+function readParticipantIdentity(req, required = false) {
+  const identity = {
+    participantId: req.get('x-participant-id') || '',
+    participantSecret: req.get('x-participant-secret') || '',
+  };
+  if (required && (!identity.participantId || !identity.participantSecret)) {
+    throw apiError(401, '缺少参与者身份');
+  }
+  return identity;
+}
+
+function createConnectionKey(rdp) {
+  const identity = JSON.stringify([
+    rdp.hostname,
+    rdp.port,
+    rdp.username,
+    rdp.password,
+  ]);
+  return crypto.createHmac('sha256', TOKEN_ENCRYPTION_KEY)
+    .update(identity)
+    .digest('base64url');
 }
 
 function normalizeRdpSettings(input = {}) {
@@ -315,7 +453,7 @@ function apiError(status, message) {
 function sendApiError(res, error) {
   const status = Number.isInteger(error.status) ? error.status : 500;
   if (status >= 500) console.error('[WebRDP] API 错误:', error);
-  res.status(status).json({ error: error.message || '服务器内部错误' });
+  return res.status(status).json({ error: error.message || '服务器内部错误' });
 }
 
 function gracefulShutdown(signal) {
@@ -328,4 +466,4 @@ function gracefulShutdown(signal) {
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
-module.exports = { app, server, sessions };
+module.exports = { app, server, sessions, isPassiveClientMessage, parseInstructionOpcodes };

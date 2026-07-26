@@ -605,6 +605,7 @@
             color: #fff;
             background: #2563eb;
             cursor: pointer;
+            white-space: nowrap;
         }
 
         .permission-bar #release-control-btn {
@@ -613,6 +614,56 @@
 
         .permission-bar .danger {
             background: #b91c1c;
+        }
+
+        @media (max-width: 600px) {
+            .permission-bar {
+                min-height: 38px;
+                box-sizing: border-box;
+                padding: 4px 6px;
+                justify-content: flex-start;
+                flex-wrap: nowrap;
+                gap: 5px;
+                overflow: hidden;
+            }
+
+            .permission-bar strong {
+                flex: 1 1 auto;
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                font-size: 11px;
+            }
+
+            .viewer-count {
+                flex: 0 0 auto;
+                font-size: 10px;
+            }
+
+            .permission-bar button {
+                flex: 0 0 auto;
+                min-width: 36px;
+                min-height: 30px;
+                padding: 4px 8px;
+                font-size: 11px;
+                line-height: 1;
+            }
+        }
+
+        @media (max-width: 380px) {
+            .permission-bar {
+                padding-inline: 4px;
+                gap: 4px;
+            }
+
+            .permission-bar button {
+                min-width: 34px;
+                padding-inline: 6px;
+            }
+
+            .viewer-count {
+                font-size: 9px;
+            }
         }
 
     </style>
@@ -718,6 +769,6 @@
     </div>
 
     <script src="guacamole-common-js/dist/guacamole-common.min.js"></script>
-    <script src="app.js?v=1.2.1"></script>
+    <script src="app.js?v=1.2.3"></script>
 </body>
 </html>

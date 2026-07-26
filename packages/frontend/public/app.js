@@ -417,8 +417,18 @@ class WebRDPLite {
         if (data) this.hasControl = Boolean(data.hasControl);
         const controlOwner = data?.controlOwner || (this.hasControl && this.role === 'controller' ? 'primary' : null);
         const isPrimary = this.role === 'controller';
+        const mobile = this.isMobile();
 
-        this.takeControlBtn.textContent = isPrimary ? '抢回控制权' : '接管操作';
+        const takeControlLabel = isPrimary ? '抢回控制权' : '接管操作';
+        this.takeControlBtn.textContent = mobile ? (isPrimary ? '抢回' : '接管') : takeControlLabel;
+        this.takeControlBtn.ariaLabel = takeControlLabel;
+        this.takeControlBtn.title = takeControlLabel;
+        this.releaseControlBtn.textContent = mobile ? '归还' : '结束操作并归还';
+        this.releaseControlBtn.ariaLabel = '结束操作并归还';
+        this.releaseControlBtn.title = '结束操作并归还';
+        this.endShareBtn.textContent = mobile ? '结束' : '结束会话';
+        this.endShareBtn.ariaLabel = '结束会话';
+        this.endShareBtn.title = '结束会话';
         this.takeControlBtn.style.display = this.role !== 'pending' && !this.hasControl ? 'inline-block' : 'none';
         this.releaseControlBtn.style.display = !isPrimary && this.hasControl ? 'inline-block' : 'none';
         this.endShareBtn.style.display = isPrimary ? 'inline-block' : 'none';
@@ -438,6 +448,7 @@ class WebRDPLite {
         } else {
             this.controlState.textContent = '主用户正在操作 · 当前为观看模式';
         }
+        this.controlState.title = this.controlState.textContent;
 
         const displayElement = this.guacClient?.getDisplay().getElement();
         if (displayElement) {

@@ -111,3 +111,49 @@ test('large touch screens keep direct Touchscreen mode', () => {
   app.setupInputListeners();
   assert.equal(app.mouse.mode, 'touchscreen');
 });
+
+test('mobile permission state uses compact labels and keeps full accessible names', () => {
+  const context = loadFrontendClass();
+  const classes = new Map();
+  const element = () => ({
+    classList: {
+      toggle(name, enabled) { classes.set(name, enabled); },
+    },
+    style: {},
+    textContent: '',
+    title: '',
+  });
+  const app = Object.create(context.WebRDPLite.prototype);
+  app.role = 'controller';
+  app.hasControl = false;
+  app.connectionStatus = 'disconnected';
+  app.takeControlBtn = element();
+  app.releaseControlBtn = element();
+  app.endShareBtn = element();
+  app.resolutionControls = element();
+  app.permissionBar = element();
+  app.controlState = element();
+  app.guacClient = null;
+
+  app.applyPermissionState({ hasControl: false, controlOwner: 'participant' });
+
+  assert.equal(classes.get('has-control'), false);
+  assert.equal(app.takeControlBtn.textContent, '抢回');
+  assert.equal(app.takeControlBtn.ariaLabel, '抢回控制权');
+  assert.equal(app.takeControlBtn.style.display, 'inline-block');
+  assert.equal(app.controlState.title, app.controlState.textContent);
+
+  app.role = 'viewer';
+  app.applyPermissionState({ hasControl: true, controlOwner: 'participant' });
+
+  assert.equal(classes.get('has-control'), true);
+  assert.equal(app.releaseControlBtn.textContent, '归还');
+  assert.equal(app.releaseControlBtn.ariaLabel, '结束操作并归还');
+  assert.equal(app.releaseControlBtn.style.display, 'inline-block');
+  assert.equal(app.endShareBtn.style.display, 'none');
+
+  context.window.innerWidth = 1024;
+  app.applyPermissionState({ hasControl: false, controlOwner: 'primary' });
+  assert.equal(app.takeControlBtn.textContent, '接管操作');
+  assert.equal(app.releaseControlBtn.textContent, '结束操作并归还');
+});

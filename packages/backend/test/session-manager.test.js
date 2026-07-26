@@ -53,6 +53,15 @@ test('assigns primary control and transfers it to an authenticated participant',
     /Invalid participant credentials/,
   );
 
+  const reclaimed = manager.takeControl(
+    session.roomId,
+    session.primaryParticipantId,
+    session.primaryParticipantSecret,
+  );
+  assert.equal(reclaimed.hasControl, true);
+  assert.equal(manager.hasControl(session.roomId, join.participantId), false);
+  manager.takeControl(session.roomId, join.participantId, join.participantSecret);
+
   const released = manager.releaseControl(session.roomId, join.participantId, join.participantSecret);
   assert.equal(released.hasControl, false);
   assert.equal(manager.hasControl(session.roomId, session.primaryParticipantId), true);

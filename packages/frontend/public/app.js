@@ -9,7 +9,6 @@ class WebRDPLite {
         this.role = 'pending';
         this.hasControl = false;
         this.session = null;
-        this.entryLink = '';
         this.sessionPollTimer = null;
         this.storageKey = 'webrdp-params';
         this.backendUrl = `${window.location.protocol}//${window.location.host}`;
@@ -34,6 +33,9 @@ class WebRDPLite {
 
         this.desktopContainer = document.getElementById('desktop-container');
         this.rdpContainer = document.getElementById('rdp-container');
+        this.touchHint = document.getElementById('touch-hint');
+        this.scrollHint = document.getElementById('scroll-hint');
+        this.dualFingerCleanup = null;
         this.statusElement = document.getElementById('status');
         this.disconnectBtn = document.getElementById('disconnect-btn');
         this.reconnectBtn = document.getElementById('reconnect-btn');
@@ -49,9 +51,6 @@ class WebRDPLite {
         this.resizeBtn = document.getElementById('resize-btn');
         this.resolutionControls = document.querySelector('.resolution-controls');
 
-        this.shareBar = document.getElementById('share-bar');
-        this.shareLinkInput = document.getElementById('share-link');
-        this.copyShareBtn = document.getElementById('copy-share-btn');
         this.endShareBtn = document.getElementById('end-share-btn');
         this.viewerCount = document.getElementById('viewer-count');
         this.permissionBar = document.getElementById('permission-bar');
@@ -70,7 +69,6 @@ class WebRDPLite {
         this.fullscreenBtn.addEventListener('click', () => this.toggleFullscreen());
         this.backBtn.addEventListener('click', () => this.leaveSession(true));
         this.resizeBtn.addEventListener('click', () => this.resizeDisplay());
-        this.copyShareBtn.addEventListener('click', () => this.copyShareLink());
         this.endShareBtn.addEventListener('click', () => this.leaveSession(false));
         this.takeControlBtn.addEventListener('click', () => this.takeControl());
         this.releaseControlBtn.addEventListener('click', () => this.releaseControl());
@@ -119,7 +117,6 @@ class WebRDPLite {
 
         if (host && user && password) {
             this.connectionParams = { host, port, user, password, width, height, title };
-            this.entryLink = this.buildEntryLink(this.connectionParams);
             this.clearSensitiveLocation();
             this.showDesktop();
             setTimeout(() => this.connect(), 50);
@@ -198,26 +195,11 @@ class WebRDPLite {
             height: this.heightInput.value.trim() || '768',
             title: document.getElementById('page-title').textContent || 'WebRDP',
         };
-        this.entryLink = this.buildEntryLink(this.connectionParams);
         this.passwordInput.value = '';
         this.saveParams();
         this.clearSensitiveLocation();
         this.showDesktop();
         setTimeout(() => this.connect(), 50);
-    }
-
-    buildEntryLink(params) {
-        const url = new URL(window.location.origin + window.location.pathname);
-        const fragment = new URLSearchParams();
-        fragment.set('host', params.host);
-        fragment.set('port', params.port || '3389');
-        fragment.set('user', params.user);
-        fragment.set('password', params.password);
-        fragment.set('width', params.width || '1024');
-        fragment.set('height', params.height || '768');
-        if (params.title && params.title !== 'WebRDP') fragment.set('title', params.title);
-        url.hash = fragment.toString();
-        return url.toString();
     }
 
     clearSensitiveLocation() {
@@ -304,10 +286,7 @@ class WebRDPLite {
             ownerSecret: data.ownerSecret,
             expiresAt: data.expiresAt,
         };
-        if (this.role === 'controller') {
-            this.shareLinkInput.value = this.entryLink || this.buildEntryLink(this.connectionParams);
-            this.viewerCount.textContent = '0 位参与者';
-        }
+        this.viewerCount.textContent = '1 人在线';
         this.showDesktop();
         return data.token;
     }
@@ -367,7 +346,10 @@ class WebRDPLite {
         };
         const [status, message] = states[state] || ['error', '未知状态'];
         this.updateStatus(status, message);
-        if (state === 3) this.adjustDisplaySize();
+        if (state === 3) {
+            this.adjustDisplaySize();
+            this.showTouchHint();
+        }
     }
 
     updateStatus(status, message) {
@@ -381,12 +363,23 @@ class WebRDPLite {
 
     setupInputListeners() {
         if (!this.guacClient || this.keyboard || this.mouse) return;
-        const displayElement = this.guacClient.getDisplay().getElement();
+        const display = this.guacClient.getDisplay();
+        const displayElement = display.getElement();
         displayElement.tabIndex = 0;
-        const useTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-        this.mouse = useTouch
-            ? new Guacamole.Mouse.Touchscreen(displayElement)
-            : new Guacamole.Mouse(displayElement);
+        display.showCursor(true);
+
+        const cursorElement = display.getCursorLayer()?.getElement();
+        if (cursorElement) cursorElement.style.zIndex = '1000';
+
+        if (this.shouldUseTouchscreen()) {
+            this.mouse = new Guacamole.Mouse.Touchscreen(displayElement);
+        } else if (this.isMobile()) {
+            this.mouse = new Guacamole.Mouse.Touchpad(displayElement);
+            this.setupDualFingerScroll(displayElement);
+        } else {
+            this.mouse = new Guacamole.Mouse(displayElement);
+        }
+
         this.mouse.onmousedown = this.mouse.onmouseup = this.mouse.onmousemove = (state) => {
             if (this.guacClient && this.hasControl) this.guacClient.sendMouseState(state);
         };
@@ -397,6 +390,18 @@ class WebRDPLite {
         this.keyboard.onkeyup = (keysym) => {
             if (this.guacClient && this.hasControl) this.guacClient.sendKeyEvent(0, keysym);
         };
+        displayElement.addEventListener('keydown', (event) => {
+            if (event.altKey || event.ctrlKey || event.metaKey) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+        }, true);
+        displayElement.addEventListener('keyup', (event) => {
+            if (event.altKey || event.ctrlKey || event.metaKey) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+        }, true);
         if (this.hasControl) displayElement.focus();
     }
 
@@ -413,9 +418,10 @@ class WebRDPLite {
         const controlOwner = data?.controlOwner || (this.hasControl && this.role === 'controller' ? 'primary' : null);
         const isPrimary = this.role === 'controller';
 
-        this.shareBar.style.display = isPrimary ? 'flex' : 'none';
-        this.takeControlBtn.style.display = !isPrimary && !this.hasControl ? 'inline-block' : 'none';
+        this.takeControlBtn.textContent = isPrimary ? '抢回控制权' : '接管操作';
+        this.takeControlBtn.style.display = this.role !== 'pending' && !this.hasControl ? 'inline-block' : 'none';
         this.releaseControlBtn.style.display = !isPrimary && this.hasControl ? 'inline-block' : 'none';
+        this.endShareBtn.style.display = isPrimary ? 'inline-block' : 'none';
         this.resolutionControls.style.display = this.hasControl ? 'flex' : 'none';
         this.permissionBar.classList.toggle('has-control', this.hasControl);
 
@@ -435,7 +441,7 @@ class WebRDPLite {
 
         const displayElement = this.guacClient?.getDisplay().getElement();
         if (displayElement) {
-            displayElement.style.cursor = this.hasControl ? 'default' : 'not-allowed';
+            displayElement.style.cursor = this.hasControl ? 'none' : 'not-allowed';
             if (this.hasControl) displayElement.focus();
         }
         if (this.connectionStatus === 'connected') {
@@ -443,14 +449,100 @@ class WebRDPLite {
         }
     }
 
+    isMobile() {
+        return window.innerWidth <= 768;
+    }
+
+    isTouchDevice() {
+        return 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    }
+
+    shouldUseTouchscreen() {
+        const isLargeScreen = window.innerWidth > 768;
+        const isDesktopMode = window.outerWidth > window.innerWidth;
+        return this.isTouchDevice() && (isLargeScreen || isDesktopMode);
+    }
+
+    showScrollHint(visible) {
+        if (!this.scrollHint) return;
+        this.scrollHint.classList.toggle('visible', visible);
+        clearTimeout(this.scrollHintTimer);
+        if (visible) {
+            this.scrollHintTimer = setTimeout(() => {
+                this.scrollHint.classList.remove('visible');
+            }, 3000);
+        }
+    }
+
+    showTouchHint() {
+        if (!this.touchHint || !this.isMobile() || !this.hasControl) return;
+        this.touchHint.classList.add('visible');
+        clearTimeout(this.touchHintTimer);
+        this.touchHintTimer = setTimeout(() => {
+            this.touchHint.classList.remove('visible');
+        }, 5000);
+    }
+
+    setupDualFingerScroll(displayElement) {
+        this.dualFingerCleanup?.();
+        const container = this.rdpContainer;
+        let lastTouchX = 0;
+        let lastTouchY = 0;
+        const onTouchStart = (event) => {
+            if (event.touches.length === 2) {
+                lastTouchX = (event.touches[0].clientX + event.touches[1].clientX) / 2;
+                lastTouchY = (event.touches[0].clientY + event.touches[1].clientY) / 2;
+            }
+        };
+        const onTouchMove = (event) => {
+            if (event.touches.length !== 2) return;
+            const currentX = (event.touches[0].clientX + event.touches[1].clientX) / 2;
+            const currentY = (event.touches[0].clientY + event.touches[1].clientY) / 2;
+            container.scrollLeft -= currentX - lastTouchX;
+            container.scrollTop -= currentY - lastTouchY;
+            lastTouchX = currentX;
+            lastTouchY = currentY;
+        };
+        displayElement.addEventListener('touchstart', onTouchStart, { passive: true });
+        displayElement.addEventListener('touchmove', onTouchMove, { passive: true });
+        this.dualFingerCleanup = () => {
+            displayElement.removeEventListener('touchstart', onTouchStart);
+            displayElement.removeEventListener('touchmove', onTouchMove);
+            this.dualFingerCleanup = null;
+        };
+    }
+
     adjustDisplaySize() {
-        if (!this.guacClient) return;
+        if (!this.guacClient || this.connectionStatus !== 'connected') return;
+        const container = this.rdpContainer;
+        const maxWidth = Math.max(1, container.clientWidth - 40);
+        const maxHeight = Math.max(1, container.clientHeight - 40);
         const width = Number(this.connectionParams.width) || 1024;
         const height = Number(this.connectionParams.height) || 768;
-        const maxWidth = Math.max(1, this.rdpContainer.clientWidth - 16);
-        const maxHeight = Math.max(1, this.rdpContainer.clientHeight - 16);
-        const scale = Math.min(maxWidth / width, maxHeight / height, 1);
-        this.guacClient.getDisplay().scale(scale);
+        const mobile = this.isMobile();
+        let scale;
+
+        if (mobile) {
+            scale = Math.min(maxHeight / height, 1);
+            if (width * scale <= maxWidth) {
+                scale = Math.min(maxWidth / width, maxHeight / height, 1);
+            }
+        } else {
+            scale = Math.min(maxWidth / width, maxHeight / height, 1);
+        }
+
+        const displayElement = this.guacClient.getDisplay().getElement();
+        displayElement.style.width = `${width * scale}px`;
+        displayElement.style.height = `${height * scale}px`;
+
+        if (mobile && width * scale > maxWidth) {
+            container.style.justifyContent = 'flex-start';
+            this.showScrollHint(true);
+        } else {
+            container.style.justifyContent = 'center';
+            this.showScrollHint(false);
+        }
+        if (this.hasControl) this.guacClient.sendSize(width, height);
     }
 
     resizeDisplay() {
@@ -459,7 +551,6 @@ class WebRDPLite {
         const height = Math.max(600, Number(this.footerHeight.value) || 768);
         this.connectionParams.width = String(width);
         this.connectionParams.height = String(height);
-        this.guacClient.sendSize(width, height);
         this.adjustDisplaySize();
     }
 
@@ -473,9 +564,7 @@ class WebRDPLite {
                     { headers: this.identityHeaders() },
                 );
                 this.applyPermissionState(data);
-                if (this.role === 'controller') {
-                    this.viewerCount.textContent = `${data.viewerCount} / ${data.maxViewers} 位参与者`;
-                }
+                this.viewerCount.textContent = `${data.viewerCount + 1} 人在线`;
             } catch (error) {
                 clearInterval(this.sessionPollTimer);
                 if (this.connectionStatus === 'connected') {
@@ -489,7 +578,7 @@ class WebRDPLite {
     }
 
     async takeControl() {
-        if (this.role === 'controller' || !this.session?.roomId || this.hasControl) return;
+        if (!this.session?.roomId || this.hasControl) return;
         this.takeControlBtn.disabled = true;
         try {
             const data = await this.fetchJson(
@@ -497,6 +586,7 @@ class WebRDPLite {
                 { method: 'POST', headers: this.identityHeaders(), body: '{}' },
             );
             this.applyPermissionState(data);
+            this.showTouchHint();
         } catch (error) {
             this.showError(error.message);
         } finally {
@@ -515,14 +605,6 @@ class WebRDPLite {
         } catch (error) {
             if (!keepalive) this.showError(error.message || '归还控制权失败');
         }
-    }
-
-    async copyShareLink() {
-        if (!this.shareLinkInput.value) return;
-        await navigator.clipboard.writeText(this.shareLinkInput.value);
-        const original = this.copyShareBtn.textContent;
-        this.copyShareBtn.textContent = '已复制';
-        setTimeout(() => { this.copyShareBtn.textContent = original; }, 1500);
     }
 
     async endOwnedSession(keepalive = false) {
@@ -572,6 +654,11 @@ class WebRDPLite {
     disconnectTunnel() {
         clearInterval(this.sessionPollTimer);
         this.sessionPollTimer = null;
+        this.dualFingerCleanup?.();
+        clearTimeout(this.scrollHintTimer);
+        clearTimeout(this.touchHintTimer);
+        this.scrollHint?.classList.remove('visible');
+        this.touchHint?.classList.remove('visible');
         if (this.keyboard) {
             this.keyboard.onkeydown = null;
             this.keyboard.onkeyup = null;

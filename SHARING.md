@@ -7,7 +7,7 @@ WebRDP 使用 guacd 的 Join Existing Connection 能力，让多个浏览器加�
 1. 用户打开包含 `host`、`user`、`password` 的统一入口链接，或在页面填写连接信息。
 2. 第一个进入的用户自动成为主用户，并创建 RDP 会话。
 3. 后续用户打开完全相同的入口链接时，后端按连接指纹识别现有会话并自动加入，默认只能观看。
-4. 观看用户可点击“接管操作”获得临时控制权；主用户及其他参与者的输入会立即在服务端被拦截。
+4. 观看用户可点击“接管操作”获得临时控制权；主用户及其他参与者的输入会立即在服务端被拦截。主用户可随时点击“抢回控制权”。
 5. 临时操作者点击“结束操作并归还”或关闭页面后，控制权自动回到主用户。
 6. 主用户断开或点击“结束会话”后，整个协作会话关闭。
 
@@ -21,7 +21,7 @@ WebRDP 使用 guacd 的 Join Existing Connection 能力，让多个浏览器加�
 https://rdp.example.com/#host=192.0.2.10&port=3389&user=administrator&password=YOUR_PASSWORD&width=1920&height=1080
 ```
 
-Fragment 不会随 HTTP 请求发送到服务器，也不会进入反向代理访问日志。页面读取参数后会立即从地址栏清除，但主用户界面中的“复制链接”仍可复制原始统一入口。
+Fragment 不会随 HTTP 请求发送到服务器，也不会进入反向代理访问日志。页面读取参数后会立即从地址栏清除，应用界面不会再次显示包含凭据的入口链接。
 
 链接本身包含 Windows 登录凭据，任何获得链接的人都能加入该连接。必须使用 HTTPS，并且只发送给受信任人员。长期方案建议改为一次性业务令牌或接入企业身份认证，不直接分发 Windows 密码。
 
@@ -66,7 +66,7 @@ docker compose up -d --build
 - `POST /api/sessions`：按 RDP 凭据创建或加入会话；首位用户返回 `controller`，后续用户返回 `viewer`。
 - `POST /api/sessions/:roomId/join`：兼容房间链接，为新参与者签发一次性 Join Token。
 - `GET /api/sessions/:roomId`：通过参与者身份头查询人数和当前控制状态。
-- `POST /api/sessions/:roomId/control`：当前参与者接管操作。
+- `POST /api/sessions/:roomId/control`：参与者接管操作，或由主用户抢回操作。
 - `DELETE /api/sessions/:roomId/control`：临时操作者归还控制权。
 - `DELETE /api/sessions/:roomId`：主用户使用 `x-owner-secret` 结束整个会话。
 

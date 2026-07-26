@@ -206,6 +206,26 @@ test('same credential entry joins one session and temporary control returns to p
   await new Promise((resolve) => setTimeout(resolve, 100));
   assert.doesNotMatch(postReadyMessages[0], /3.key/);
 
+  const reclaimResponse = await fetch(
+    `http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}/control`,
+    { method: 'POST', headers: identityHeaders(primary) },
+  );
+  assert.equal(reclaimResponse.status, 200);
+  assert.equal((await reclaimResponse.json()).hasControl, true);
+
+  primarySocket.send(instruction(['key', '1', '67']));
+  await waitFor(() => postReadyMessages[0].includes('3.key'));
+  const participantMessageLength = postReadyMessages[1].length;
+  participantSocket.send(instruction(['key', '1', '68']));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(postReadyMessages[1].length, participantMessageLength);
+
+  const retakeResponse = await fetch(
+    `http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}/control`,
+    { method: 'POST', headers: identityHeaders(participant) },
+  );
+  assert.equal(retakeResponse.status, 200);
+
   const participantClosed = waitForClose(participantSocket);
   participantSocket.close();
   await participantClosed;

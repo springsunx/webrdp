@@ -131,7 +131,6 @@ test('mobile permission state uses compact labels and keeps full accessible name
   app.releaseControlBtn = element();
   app.endShareBtn = element();
   app.resolutionControls = element();
-  app.permissionBar = element();
   app.controlState = element();
   app.guacClient = null;
 
@@ -141,7 +140,9 @@ test('mobile permission state uses compact labels and keeps full accessible name
   assert.equal(app.takeControlBtn.textContent, '抢回');
   assert.equal(app.takeControlBtn.ariaLabel, '抢回控制权');
   assert.equal(app.takeControlBtn.style.display, 'inline-block');
-  assert.equal(app.controlState.title, app.controlState.textContent);
+  assert.equal(app.controlState.textContent, '他人控制');
+  assert.equal(app.controlState.ariaLabel, '临时用户正在操作 · 主用户输入已锁定');
+  assert.equal(app.controlState.title, app.controlState.ariaLabel);
 
   app.role = 'viewer';
   app.applyPermissionState({ hasControl: true, controlOwner: 'participant' });
@@ -156,4 +157,19 @@ test('mobile permission state uses compact labels and keeps full accessible name
   app.applyPermissionState({ hasControl: false, controlOwner: 'primary' });
   assert.equal(app.takeControlBtn.textContent, '接管操作');
   assert.equal(app.releaseControlBtn.textContent, '结束操作并归还');
+  assert.equal(app.controlState.textContent, '主用户正在操作 · 当前为观看模式');
+});
+
+test('mobile viewer count keeps the toolbar label compact', () => {
+  const context = loadFrontendClass();
+  const app = Object.create(context.WebRDPLite.prototype);
+  app.viewerCount = {};
+
+  app.updateViewerCount(12);
+  assert.equal(app.viewerCount.textContent, '12人');
+  assert.equal(app.viewerCount.ariaLabel, '12 人在线');
+
+  context.window.innerWidth = 1024;
+  app.updateViewerCount(12);
+  assert.equal(app.viewerCount.textContent, '12 人在线');
 });

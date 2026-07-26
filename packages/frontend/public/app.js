@@ -53,7 +53,6 @@ class WebRDPLite {
 
         this.endShareBtn = document.getElementById('end-share-btn');
         this.viewerCount = document.getElementById('viewer-count');
-        this.permissionBar = document.getElementById('permission-bar');
         this.controlState = document.getElementById('control-state');
         this.takeControlBtn = document.getElementById('take-control-btn');
         this.releaseControlBtn = document.getElementById('release-control-btn');
@@ -217,7 +216,7 @@ class WebRDPLite {
         this.footerUser.textContent = this.connectionParams.user || '-';
         this.footerWidth.value = this.connectionParams.width;
         this.footerHeight.value = this.connectionParams.height;
-        this.permissionBar.style.display = 'flex';
+        this.updateViewerCount(1);
         this.applyPermissionState();
     }
 
@@ -286,7 +285,6 @@ class WebRDPLite {
             ownerSecret: data.ownerSecret,
             expiresAt: data.expiresAt,
         };
-        this.viewerCount.textContent = '1 人在线';
         this.showDesktop();
         return data.token;
     }
@@ -354,7 +352,17 @@ class WebRDPLite {
 
     updateStatus(status, message) {
         this.connectionStatus = status;
-        this.statusElement.textContent = message;
+        const mobileMessages = {
+            '正在连接...': '连接中',
+            '等待远程桌面...': '等待桌面',
+            '已连接 · 可操作': '可操作',
+            '已连接 · 观看中': '观看中',
+            '正在断开...': '断开中',
+        };
+        this.statusElement.textContent = this.isMobile()
+            ? (mobileMessages[message] || (status === 'error' ? '错误' : message))
+            : message;
+        this.statusElement.title = message;
         this.statusElement.className = `status ${status}`;
         this.connectBtn.disabled = status === 'connected' || status === 'connecting';
         this.disconnectBtn.disabled = status !== 'connected';
@@ -433,22 +441,32 @@ class WebRDPLite {
         this.releaseControlBtn.style.display = !isPrimary && this.hasControl ? 'inline-block' : 'none';
         this.endShareBtn.style.display = isPrimary ? 'inline-block' : 'none';
         this.resolutionControls.style.display = this.hasControl ? 'flex' : 'none';
-        this.permissionBar.classList.toggle('has-control', this.hasControl);
+        this.controlState.classList.toggle('has-control', this.hasControl);
 
+        let controlStateText;
+        let mobileControlStateText;
         if (this.role === 'pending') {
-            this.controlState.textContent = '正在分配协作身份...';
+            controlStateText = '正在分配协作身份...';
+            mobileControlStateText = '分配中';
         } else if (isPrimary && this.hasControl) {
-            this.controlState.textContent = '主用户 · 当前可操作';
+            controlStateText = '主用户 · 当前可操作';
+            mobileControlStateText = '主控';
         } else if (isPrimary) {
-            this.controlState.textContent = '临时用户正在操作 · 主用户输入已锁定';
+            controlStateText = '临时用户正在操作 · 主用户输入已锁定';
+            mobileControlStateText = '他人控制';
         } else if (this.hasControl) {
-            this.controlState.textContent = '临时控制中 · 结束后将自动归还主用户';
+            controlStateText = '临时控制中 · 结束后将自动归还主用户';
+            mobileControlStateText = '控制中';
         } else if (controlOwner === 'participant') {
-            this.controlState.textContent = '其他参与者正在操作 · 当前为观看模式';
+            controlStateText = '其他参与者正在操作 · 当前为观看模式';
+            mobileControlStateText = '观看';
         } else {
-            this.controlState.textContent = '主用户正在操作 · 当前为观看模式';
+            controlStateText = '主用户正在操作 · 当前为观看模式';
+            mobileControlStateText = '观看';
         }
-        this.controlState.title = this.controlState.textContent;
+        this.controlState.textContent = mobile ? mobileControlStateText : controlStateText;
+        this.controlState.ariaLabel = controlStateText;
+        this.controlState.title = controlStateText;
 
         const displayElement = this.guacClient?.getDisplay().getElement();
         if (displayElement) {
@@ -462,6 +480,13 @@ class WebRDPLite {
 
     isMobile() {
         return window.innerWidth <= 768;
+    }
+
+    updateViewerCount(total) {
+        const label = `${total} 人在线`;
+        this.viewerCount.textContent = this.isMobile() ? `${total}人` : label;
+        this.viewerCount.ariaLabel = label;
+        this.viewerCount.title = label;
     }
 
     isTouchDevice() {
@@ -575,7 +600,7 @@ class WebRDPLite {
                     { headers: this.identityHeaders() },
                 );
                 this.applyPermissionState(data);
-                this.viewerCount.textContent = `${data.viewerCount + 1} 人在线`;
+                this.updateViewerCount(data.viewerCount + 1);
             } catch (error) {
                 clearInterval(this.sessionPollTimer);
                 if (this.connectionStatus === 'connected') {

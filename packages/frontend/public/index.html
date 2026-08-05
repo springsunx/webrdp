@@ -263,10 +263,17 @@
             background: #065f46;
         }
 
-        .viewer-count {
+        .viewer-count,
+        .connection-time {
             color: #bfdbfe;
             font-size: 10px;
             white-space: nowrap;
+        }
+
+        .connection-time {
+            display: none;
+            color: #d1fae5;
+            font-variant-numeric: tabular-nums;
         }
 
         #take-control-btn,
@@ -590,7 +597,8 @@
                 padding-inline: 6px;
             }
 
-            .viewer-count {
+            .viewer-count,
+            .connection-time {
                 flex: 0 0 auto;
                 font-size: 9px;
             }
@@ -705,6 +713,7 @@
             <h1 id="desktop-title">WebRDP</h1>
             <div class="controls">
                 <span id="status" class="status disconnected">Disconnected</span>
+                <span id="connection-time" class="connection-time" aria-live="off"></span>
                 <strong id="control-state" class="collaboration-state">正在分配协作身份...</strong>
                 <button id="take-control-btn" type="button">接管操作</button>
                 <button id="release-control-btn" type="button">结束操作并归还</button>
@@ -745,6 +754,6 @@
     </div>
 
     <script src="guacamole-common-js/dist/guacamole-common.min.js"></script>
-    <script src="app.js?v=1.4.0"></script>
+    <script src="app.js?v=1.4.1"></script>
 </body>
 </html>

@@ -152,6 +152,7 @@ test('same credential entry joins one session and temporary control returns to p
   const primary = await createResponse.json();
   assert.equal(primary.role, 'controller');
   assert.equal(primary.hasControl, true);
+  assert.equal(typeof primary.createdAt, 'number');
 
   primarySocket = await openWebSocket(
     `ws://127.0.0.1:${appPort}/?token=${encodeURIComponent(primary.token)}`,
@@ -173,6 +174,7 @@ test('same credential entry joins one session and temporary control returns to p
   const participant = await joinResponse.json();
   assert.equal(participant.role, 'viewer');
   assert.equal(participant.roomId, primary.roomId);
+  assert.equal(participant.createdAt, primary.createdAt);
 
   participantSocket = await openWebSocket(
     `ws://127.0.0.1:${appPort}/?token=${encodeURIComponent(participant.token)}`,
@@ -271,6 +273,7 @@ test('same credential entry joins one session and temporary control returns to p
   assert.equal(resumeResponse.status, 200);
   const resumedPrimary = await resumeResponse.json();
   assert.equal(resumedPrimary.role, 'controller');
+  assert.equal(resumedPrimary.createdAt, primary.createdAt);
   primarySocket = await openWebSocket(
     `ws://127.0.0.1:${appPort}/?token=${encodeURIComponent(resumedPrimary.token)}`,
   );

@@ -91,6 +91,7 @@ class SessionManager {
       state: session.state,
       viewerCount: session.viewers.size,
       maxViewers: this.maxViewers,
+      createdAt: session.createdAt,
       expiresAt: session.expiresAt,
       reconnectUntil: session.reconnectUntil,
       controlVersion: session.controlVersion,
@@ -130,6 +131,7 @@ class SessionManager {
       participantId,
       participantSecret,
       guacdConnectionId: session.guacdConnectionId,
+      createdAt: session.createdAt,
       expiresAt: session.expiresAt,
     };
   }

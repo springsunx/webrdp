@@ -13,6 +13,7 @@ function loadFrontendClass() {
   const context = {
     URL,
     URLSearchParams,
+    clearInterval,
     clearTimeout,
     console,
     navigator: { maxTouchPoints: 5 },
@@ -22,6 +23,7 @@ function loadFrontendClass() {
       setItem(key, value) { sessionValues.set(key, value); },
     },
     setTimeout,
+    setInterval,
     window: { innerWidth: 390, outerWidth: 390 },
     document: { addEventListener() {} },
   };
@@ -178,6 +180,27 @@ test('mobile viewer count keeps the toolbar label compact', () => {
   context.window.innerWidth = 1024;
   app.updateViewerCount(12);
   assert.equal(app.viewerCount.textContent, '12 人在线');
+});
+
+test('connection duration stays compact on mobile and includes days on desktop', () => {
+  const context = loadFrontendClass();
+  const app = Object.create(context.WebRDPLite.prototype);
+  app.connectionTime = { style: {} };
+
+  assert.equal(app.formatConnectionDuration(3_661_000, true), '01:01:01');
+  assert.equal(app.formatConnectionDuration(61_000, false), '01:01');
+  assert.equal(app.formatConnectionDuration(3_661_000, false), '01:01');
+  assert.equal(app.formatConnectionDuration(90_061_000, true), '1天 01:01:01');
+  assert.equal(app.formatConnectionDuration(90_061_000, false), '1天 01:01');
+
+  app.connectionStartedAt = Date.now() - 90_061_000;
+  app.updateConnectionTime();
+  assert.match(app.connectionTime.textContent, /^1天 01:01$/);
+  assert.match(app.connectionTime.ariaLabel, /^连接时长 1天 01:01:[0-5]\d$/);
+
+  context.window.innerWidth = 1024;
+  app.updateConnectionTime();
+  assert.match(app.connectionTime.textContent, /^时长 1天 01:01:[0-5]\d$/);
 });
 
 test('control push immediately updates a reclaimed viewer toolbar', () => {

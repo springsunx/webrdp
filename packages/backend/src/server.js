@@ -280,6 +280,7 @@ function createPrimaryResponse(session, rdp) {
     ownerSecret: session.ownerSecret,
     role: 'controller',
     hasControl: true,
+    createdAt: session.createdAt,
     expiresAt: session.expiresAt,
     reconnectGraceMs: PRIMARY_RECONNECT_GRACE_MS,
     token,
@@ -306,6 +307,7 @@ function createParticipantResponse(roomId, displaySettings) {
     participantSecret: join.participantSecret,
     role: 'viewer',
     hasControl: false,
+    createdAt: join.createdAt,
     expiresAt: join.expiresAt,
     token,
   };

@@ -97,6 +97,7 @@ test('renews an active primary lease and allows reconnection within the grace pe
     session.primaryParticipantId,
     session.primaryParticipantSecret,
   );
+  assert.equal(renewed.createdAt, 10_000);
   assert.equal(renewed.expiresAt, now + 1_000);
   now += 900;
   assert.equal(manager.hasControl(session.roomId, session.primaryParticipantId), true);

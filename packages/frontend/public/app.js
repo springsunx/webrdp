@@ -13,6 +13,8 @@ class WebRDPLite {
         this.controlVersion = -1;
         this.session = null;
         this.sessionPollTimer = null;
+        this.connectionStartedAt = null;
+        this.connectionTimeTimer = null;
         this.storageKey = 'webrdp-params';
         this.resumeStorageKey = 'webrdp-primary-resume';
         this.resumeSession = false;
@@ -47,6 +49,7 @@ class WebRDPLite {
         this.scrollHint = document.getElementById('scroll-hint');
         this.dualFingerCleanup = null;
         this.statusElement = document.getElementById('status');
+        this.connectionTime = document.getElementById('connection-time');
         this.disconnectBtn = document.getElementById('disconnect-btn');
         this.reconnectBtn = document.getElementById('reconnect-btn');
         this.fullscreenBtn = document.getElementById('fullscreen-btn');
@@ -248,6 +251,7 @@ class WebRDPLite {
 
         this.role = 'pending';
         this.hasControl = false;
+        this.resetConnectionClock();
         this.session = null;
         this.connectionParams = {
             host,
@@ -374,6 +378,7 @@ class WebRDPLite {
 
         this.role = data.role;
         this.hasControl = Boolean(data.hasControl);
+        this.setConnectionStartedAt(data.createdAt);
         this.resumeSession = false;
         this.reconnectGraceMs = Number(data.reconnectGraceMs) || this.reconnectGraceMs;
         this.session = {
@@ -444,13 +449,17 @@ class WebRDPLite {
         const [status, message] = states[state] || ['error', '未知状态'];
         this.updateStatus(status, message);
         if (state === 3) {
+            this.startConnectionClock();
             this.reconnectInProgress = false;
             this.reconnectDeadline = 0;
             this.intentionalDisconnect = false;
             this.persistPrimaryResume();
             this.adjustDisplaySize();
             this.showTouchHint();
-        } else if (state === 5) {
+        } else if (state === 4 || state === 5) {
+            this.stopConnectionClock();
+        }
+        if (state === 5) {
             this.reconnectInProgress = false;
             if (!this.intentionalDisconnect
                 && this.role === 'controller' && this.session?.ownerSecret) {
@@ -539,6 +548,7 @@ class WebRDPLite {
             if (controlVersion < this.controlVersion) return;
             this.controlVersion = controlVersion;
         }
+        this.setConnectionStartedAt(data?.createdAt);
         this.applyPermissionState(data);
         if (Number.isFinite(Number(data?.viewerCount))) {
             this.updateViewerCount(Number(data.viewerCount) + 1);
@@ -630,6 +640,67 @@ class WebRDPLite {
         this.viewerCount.textContent = this.isMobile() ? `${total}人` : label;
         this.viewerCount.ariaLabel = label;
         this.viewerCount.title = label;
+    }
+
+    setConnectionStartedAt(value) {
+        const startedAt = Number(value);
+        if (!Number.isFinite(startedAt) || startedAt <= 0) return;
+        if (this.connectionStartedAt === startedAt) return;
+        this.connectionStartedAt = startedAt;
+        this.updateConnectionTime();
+    }
+
+    startConnectionClock() {
+        if (!this.connectionStartedAt) this.connectionStartedAt = Date.now();
+        clearInterval(this.connectionTimeTimer);
+        this.updateConnectionTime();
+        this.connectionTimeTimer = setInterval(() => this.updateConnectionTime(), 1000);
+    }
+
+    stopConnectionClock() {
+        clearInterval(this.connectionTimeTimer);
+        this.connectionTimeTimer = null;
+        this.updateConnectionTime();
+    }
+
+    resetConnectionClock() {
+        clearInterval(this.connectionTimeTimer);
+        this.connectionTimeTimer = null;
+        this.connectionStartedAt = null;
+        this.updateConnectionTime();
+    }
+
+    updateConnectionTime() {
+        if (!this.connectionTime) return;
+        if (!this.connectionStartedAt) {
+            this.connectionTime.style.display = 'none';
+            this.connectionTime.textContent = '';
+            this.connectionTime.removeAttribute?.('aria-label');
+            this.connectionTime.removeAttribute?.('title');
+            return;
+        }
+        const elapsedMs = Math.max(0, Date.now() - this.connectionStartedAt);
+        const fullDuration = this.formatConnectionDuration(elapsedMs, true);
+        const compactDuration = this.formatConnectionDuration(elapsedMs, false);
+        this.connectionTime.style.display = 'inline-block';
+        this.connectionTime.textContent = this.isMobile() ? compactDuration : `时长 ${fullDuration}`;
+        this.connectionTime.ariaLabel = `连接时长 ${fullDuration}`;
+        this.connectionTime.title = `连接开始：${new Date(this.connectionStartedAt).toLocaleString()}`;
+    }
+
+    formatConnectionDuration(elapsedMs, includeSeconds) {
+        const totalSeconds = Math.max(0, Math.floor(Number(elapsedMs) / 1000));
+        const days = Math.floor(totalSeconds / 86400);
+        const hours = Math.floor((totalSeconds % 86400) / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        const prefix = days > 0 ? `${days}天 ` : '';
+        const hourText = String(hours).padStart(2, '0');
+        const minuteText = String(minutes).padStart(2, '0');
+        const secondText = String(seconds).padStart(2, '0');
+        if (includeSeconds) return `${prefix}${hourText}:${minuteText}:${secondText}`;
+        if (days > 0 || totalSeconds >= 3600) return `${prefix}${hourText}:${minuteText}`;
+        return `${minuteText}:${secondText}`;
     }
 
     isTouchDevice() {
@@ -809,6 +880,7 @@ class WebRDPLite {
         if (this.role === 'controller') await this.endOwnedSession();
         else await this.releaseControl();
         this.disconnectTunnel();
+        this.resetConnectionClock();
         if (showLogin) {
             this.role = 'pending';
             this.hasControl = false;
@@ -862,6 +934,7 @@ class WebRDPLite {
     }
 
     disconnectTunnel() {
+        this.stopConnectionClock();
         clearInterval(this.sessionPollTimer);
         this.sessionPollTimer = null;
         this.dualFingerCleanup?.();

@@ -106,12 +106,12 @@ environment:
   - GUACD_PORT=4822
   - PORT=3000
   - SESSION_TTL_MS=28800000
-  - PRIMARY_RECONNECT_GRACE_MS=300000
+  - PRIMARY_RECONNECT_GRACE_MS=86400000
   - GUACAMOLE_MAX_INACTIVITY_MS=0
 ```
 
-主连接在线时会持续刷新 `SESSION_TTL_MS` 租约，因此不会在固定时长后断开。
-异常断线后可在 `PRIMARY_RECONNECT_GRACE_MS` 时间内自动恢复；值 `300000` 表示 5 分钟。
+主连接处于活动状态时不按固定 TTL 清理，因此不会在固定时长后从会话表消失。
+异常断线后可在 `PRIMARY_RECONNECT_GRACE_MS` 时间内自动恢复；值 `86400000` 表示 24 小时。
 `GUACAMOLE_MAX_INACTIVITY_MS=0` 表示禁用应用层空闲断开，Windows RDP 服务端策略仍然生效。
 
 ## 🛠️ 开发

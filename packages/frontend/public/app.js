@@ -13,14 +13,16 @@ class WebRDPLite {
         this.controlVersion = -1;
         this.session = null;
         this.sessionPollTimer = null;
+        this.sessionPollFailures = 0;
         this.connectionStartedAt = null;
         this.connectionTimeTimer = null;
         this.storageKey = 'webrdp-params';
         this.resumeStorageKey = 'webrdp-primary-resume';
         this.resumeSession = false;
-        this.reconnectGraceMs = 5 * 60 * 1000;
+        this.reconnectGraceMs = 24 * 60 * 60 * 1000;
         this.reconnectDeadline = 0;
         this.reconnectTimer = null;
+        this.reconnectAttempt = 0;
         this.reconnectInProgress = false;
         this.intentionalDisconnect = false;
         this.backendUrl = `${window.location.protocol}//${window.location.host}`;
@@ -337,7 +339,9 @@ class WebRDPLite {
             this.startSessionPolling();
         } catch (error) {
             this.reconnectInProgress = false;
-            if (this.resumeSession && this.canRetryPrimaryReconnect(error)) {
+            if (this.resumeSession && error?.status === 404 && this.canRecreatePrimarySession()) {
+                this.restartLostPrimarySession();
+            } else if (this.resumeSession && this.canRetryPrimaryReconnect(error)) {
                 this.schedulePrimaryReconnect();
             } else {
                 if (this.resumeSession) {
@@ -452,6 +456,7 @@ class WebRDPLite {
             this.startConnectionClock();
             this.reconnectInProgress = false;
             this.reconnectDeadline = 0;
+            this.reconnectAttempt = 0;
             this.intentionalDisconnect = false;
             this.persistPrimaryResume();
             this.adjustDisplaySize();
@@ -813,17 +818,35 @@ class WebRDPLite {
                     `/api/sessions/${encodeURIComponent(this.session.roomId)}`,
                     { headers: this.identityHeaders(), cache: 'no-store' },
                 );
+                this.sessionPollFailures = 0;
                 this.applySessionState(data);
             } catch (error) {
-                clearInterval(this.sessionPollTimer);
-                if (this.connectionStatus === 'connected') {
-                    this.disconnectTunnel();
-                    this.updateStatus('error', '协作会话已结束或身份已失效');
-                }
+                this.handleSessionPollError(error);
             }
         };
         this.sessionPollTimer = setInterval(poll, 1000);
         poll();
+    }
+
+    handleSessionPollError(error) {
+        this.sessionPollFailures = (Number(this.sessionPollFailures) || 0) + 1;
+        if (error?.status === 404) {
+            clearInterval(this.sessionPollTimer);
+            if (this.role === 'controller' && this.canRecreatePrimarySession()) {
+                this.restartLostPrimarySession();
+            } else if (this.connectionStatus === 'connected') {
+                this.disconnectTunnel();
+                this.updateStatus('error', '后端会话已丢失，请使用原始连接链接重新连接');
+            }
+        } else if ([401, 403].includes(error?.status)) {
+            clearInterval(this.sessionPollTimer);
+            if (this.connectionStatus === 'connected') {
+                this.disconnectTunnel();
+                this.updateStatus('error', '协作身份已失效，请重新连接');
+            }
+        } else if (this.sessionPollFailures === 5) {
+            console.warn('Session status polling is temporarily unavailable');
+        }
     }
 
     async takeControl() {
@@ -914,6 +937,30 @@ class WebRDPLite {
         return Date.now() < this.reconnectDeadline;
     }
 
+    canRecreatePrimarySession() {
+        return Boolean(
+            this.connectionParams.host
+            && this.connectionParams.user
+            && this.connectionParams.password,
+        );
+    }
+
+    restartLostPrimarySession() {
+        this.intentionalDisconnect = true;
+        this.disconnectTunnel();
+        this.intentionalDisconnect = false;
+        this.clearPrimaryResume();
+        this.resetConnectionClock();
+        this.resumeSession = false;
+        this.reconnectDeadline = 0;
+        this.reconnectAttempt = 0;
+        this.session = null;
+        this.role = 'pending';
+        this.hasControl = false;
+        this.updateStatus('connecting', '原会话已失效，正在重新建立主连接...');
+        setTimeout(() => this.connect(), 250);
+    }
+
     schedulePrimaryReconnect() {
         if (this.intentionalDisconnect || this.reconnectTimer || !this.session?.ownerSecret) return;
         if (!this.reconnectDeadline) {
@@ -926,17 +973,21 @@ class WebRDPLite {
             return;
         }
         this.updateStatus('connecting', '主连接中断，正在自动恢复...');
+        const reconnectAttempt = Number(this.reconnectAttempt) || 0;
+        const retryDelay = Math.min(30_000, 1000 * (2 ** Math.min(reconnectAttempt, 5)));
+        this.reconnectAttempt = reconnectAttempt + 1;
         this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null;
             this.resumeSession = true;
             this.connect();
-        }, 1000);
+        }, retryDelay);
     }
 
     disconnectTunnel() {
         this.stopConnectionClock();
         clearInterval(this.sessionPollTimer);
         this.sessionPollTimer = null;
+        this.sessionPollFailures = 0;
         this.dualFingerCleanup?.();
         clearTimeout(this.scrollHintTimer);
         clearTimeout(this.touchHintTimer);

@@ -25,9 +25,9 @@ const JOIN_TOKEN_TTL_MS = parseInteger(
 );
 const PRIMARY_RECONNECT_GRACE_MS = parseInteger(
   process.env.PRIMARY_RECONNECT_GRACE_MS,
-  5 * 60 * 1000,
+  24 * 60 * 60 * 1000,
   10 * 1000,
-  60 * 60 * 1000,
+  30 * 24 * 60 * 60 * 1000,
 );
 const GUACAMOLE_MAX_INACTIVITY_MS = parseInteger(
   process.env.GUACAMOLE_MAX_INACTIVITY_MS,

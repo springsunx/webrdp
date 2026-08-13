@@ -5,7 +5,7 @@ class SessionManager {
     ttlMs,
     maxViewers,
     pendingTtlMs = 60_000,
-    reconnectGraceMs = 5 * 60_000,
+    reconnectGraceMs = 24 * 60 * 60_000,
     now = () => Date.now(),
   }) {
     this.ttlMs = ttlMs;
@@ -20,7 +20,7 @@ class SessionManager {
   get activeCount() {
     let count = 0;
     for (const session of this.sessions.values()) {
-      if (session.state === 'active' && session.expiresAt > this.now()) count += 1;
+      if (session.state === 'active') count += 1;
     }
     return count;
   }
@@ -61,12 +61,7 @@ class SessionManager {
     const roomId = this.connectionIndex.get(connectionKey);
     if (!roomId) return null;
     const session = this.sessions.get(roomId);
-    const creationExpired = session?.state === 'creating'
-      && session.createdAt + this.pendingTtlMs <= this.now();
-    const reconnectExpired = session?.state === 'reconnecting'
-      && session.reconnectUntil <= this.now();
-    if (!session || session.state === 'closed' || session.expiresAt <= this.now()
-      || creationExpired || reconnectExpired) {
+    if (!session || this.isExpired(session)) {
       this.connectionIndex.delete(connectionKey);
       if (session) this.sessions.delete(roomId);
       return null;
@@ -274,16 +269,10 @@ class SessionManager {
   }
 
   cleanupExpired() {
-    const now = this.now();
     let removed = 0;
     for (const [roomId, session] of this.sessions.entries()) {
       this.prunePending(session);
-      const creationExpired = session.state === 'creating'
-        && session.createdAt + this.pendingTtlMs <= now;
-      const reconnectExpired = session.state === 'reconnecting'
-        && session.reconnectUntil <= now;
-      if (session.expiresAt <= now || session.state === 'closed'
-        || creationExpired || reconnectExpired) {
+      if (this.isExpired(session)) {
         this.removeConnectionIndex(session);
         this.sessions.delete(roomId);
         removed += 1;
@@ -323,9 +312,15 @@ class SessionManager {
   }
 
   isExpired(session) {
-    return session.state === 'closed'
-      || session.expiresAt <= this.now()
-      || (session.state === 'reconnecting' && session.reconnectUntil <= this.now());
+    if (session.state === 'closed') return true;
+    if (session.state === 'active') return false;
+    if (session.state === 'creating') {
+      return session.createdAt + this.pendingTtlMs <= this.now();
+    }
+    if (session.state === 'reconnecting') {
+      return !session.reconnectUntil || session.reconnectUntil <= this.now();
+    }
+    return session.expiresAt <= this.now();
   }
 
   safeEqual(expectedValue, suppliedValue) {

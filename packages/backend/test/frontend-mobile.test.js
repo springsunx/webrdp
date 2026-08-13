@@ -306,3 +306,57 @@ test('an unexpected primary tunnel error schedules automatic reconnection', () =
   assert.equal(app.lastStatus, 'connecting');
   assert.equal(app.lastMessage, '主连接中断，正在自动恢复...');
 });
+
+test('a lost backend session is recreated when the primary still has credentials', () => {
+  const context = loadFrontendClass();
+  let scheduledDelay;
+  context.setTimeout = (handler, delay) => {
+    scheduledDelay = delay;
+    return 17;
+  };
+  const app = Object.create(context.WebRDPLite.prototype);
+  app.connectionParams = {
+    host: '192.0.2.10',
+    user: 'test-user',
+    password: 'still-in-memory',
+  };
+  app.session = { roomId: 'lost-room', ownerSecret: 'owner-secret' };
+  app.role = 'controller';
+  app.resumeSession = true;
+  app.reconnectAttempt = 3;
+  app.disconnectTunnel = () => { app.disconnected = true; };
+  app.clearPrimaryResume = () => { app.resumeCleared = true; };
+  app.resetConnectionClock = () => { app.clockReset = true; };
+  app.updateStatus = (status, message) => {
+    app.lastStatus = status;
+    app.lastMessage = message;
+  };
+
+  app.restartLostPrimarySession();
+
+  assert.equal(app.disconnected, true);
+  assert.equal(app.resumeCleared, true);
+  assert.equal(app.clockReset, true);
+  assert.equal(app.session, null);
+  assert.equal(app.role, 'pending');
+  assert.equal(app.resumeSession, false);
+  assert.equal(app.reconnectAttempt, 0);
+  assert.equal(scheduledDelay, 250);
+  assert.equal(app.lastStatus, 'connecting');
+  assert.equal(app.lastMessage, '原会话已失效，正在重新建立主连接...');
+});
+
+test('temporary status polling failures do not disconnect a healthy tunnel', () => {
+  const context = loadFrontendClass();
+  const app = Object.create(context.WebRDPLite.prototype);
+  app.sessionPollFailures = 0;
+  app.connectionStatus = 'connected';
+  app.disconnectTunnel = () => { app.disconnected = true; };
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    app.handleSessionPollError(new Error('temporary network failure'));
+  }
+
+  assert.equal(app.sessionPollFailures, 5);
+  assert.equal(app.disconnected, undefined);
+});

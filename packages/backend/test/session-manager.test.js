@@ -103,6 +103,12 @@ test('renews an active primary lease and allows reconnection within the grace pe
   assert.equal(manager.hasControl(session.roomId, session.primaryParticipantId), true);
   assert.equal(session.expiresAt, now + 1_000);
 
+  now += 10_000;
+  assert.equal(manager.cleanupExpired(), 0);
+  assert.equal(manager.activeCount, 1);
+  assert.equal(manager.findByConnectionKey('long-lived'), session);
+  assert.equal(manager.getPublic(session.roomId).state, 'active');
+
   const oldSecret = session.primaryParticipantSecret;
   manager.controllerClosed(session.roomId, '$connection-id');
   assert.equal(session.state, 'reconnecting');

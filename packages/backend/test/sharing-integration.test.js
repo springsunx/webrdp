@@ -134,8 +134,10 @@ test('same credential entry joins one session and temporary control returns to p
       TOKEN_ENCRYPTION_KEY: crypto.randomBytes(32).toString('base64'),
       GUACAMOLE_LOG_LEVEL: 'QUIET',
     },
-    stdio: 'ignore',
+    stdio: ['ignore', 'pipe', 'ignore'],
   });
+  let serverLog = '';
+  child.stdout.on('data', chunk => { serverLog += chunk.toString(); });
 
   let primarySocket;
   let participantSocket;
@@ -266,6 +268,12 @@ test('same credential entry joins one session and temporary control returns to p
   await disconnectedPrimary;
   primarySocket = null;
   assert.equal(guacdSockets[0].destroyed, false);
+  await waitFor(() => serverLog.includes('"source":"websocket"'));
+  const browserCloseLog = serverLog.split('\n').find(line => line.includes('"source":"websocket"'));
+  const browserClose = JSON.parse(browserCloseLog.slice(browserCloseLog.indexOf('{')));
+  assert.ok(browserClose.keepaliveAttempts >= 3);
+  assert.equal(typeof browserClose.sinceKeepaliveMs, 'number');
+  assert.doesNotMatch(browserCloseLog, /test-password|owner-secret|test-user/);
   await waitFor(async () => {
     const response = await fetch(`http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}`, {
       headers: identityHeaders(participant),
@@ -303,9 +311,10 @@ test('same credential entry joins one session and temporary control returns to p
 
   assert.deepEqual(selected, ['rdp', sharedConnectionId, sharedConnectionId, sharedConnectionId]);
   const participantClosed = waitForClose(participantSocket);
-  participantSocket.close();
+  guacdSockets[2].destroy();
   await participantClosed;
   participantSocket = null;
+  await waitFor(() => serverLog.includes('"source":"guacd"'));
   await waitFor(async () => {
     const response = await fetch(`http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}`, {
       headers: identityHeaders(resumedPrimary),

@@ -65,12 +65,44 @@ ClientConnection.prototype.sendMessageToGuacd = function guardedClientMessage(me
   }
 };
 
+// Capture the first observed close source before guacamole-lite tears down
+// its socket listeners. Do not record URLs, credentials or protocol payloads.
+const closeClient = ClientConnection.prototype.close;
+ClientConnection.prototype.close = function closeWithDiagnostics(error) {
+  if (this.state !== this.STATE_CLOSED && this.state !== this.STATE_CLOSING) {
+    this.closeDiagnostics ||= {};
+    this.closeDiagnostics.source ||= 'application';
+    if (error?.message === 'guacd was inactive for too long') {
+      this.closeDiagnostics.error = 'guacd_idle_timeout';
+    } else if (error?.message === 'Session terminated due to inactivity') {
+      this.closeDiagnostics.error = 'browser_idle_timeout';
+    } else if (typeof error?.code === 'string' && /^E[A-Z0-9_]{1,30}$/.test(error.code)) {
+      this.closeDiagnostics.error = error.code;
+    }
+  }
+  return closeClient.call(this, error);
+};
+
 // guacamole-lite otherwise closes every browser's guacd socket after ten
 // seconds without upstream traffic, even while the browser is briefly paused.
 const connectClient = ClientConnection.prototype.connect;
 ClientConnection.prototype.connect = function connectWithIdleGrace(options) {
   connectClient.call(this, options);
   const client = this.guacdClient;
+  this.closeDiagnostics = {};
+  this.webSocket.prependListener('close', (code) => {
+    this.closeDiagnostics.source ||= 'websocket';
+    this.closeDiagnostics.websocketCode = code;
+  });
+  client.prependListener('error', () => { this.closeDiagnostics.source ||= 'guacd'; });
+  client.prependListener('close', () => { this.closeDiagnostics.source ||= 'guacd'; });
+  const handleInstruction = client.parser.oninstruction;
+  client.parser.oninstruction = (opcode, args) => {
+    if (opcode === 'error' && /^\d+$/.test(args[1] || '')) {
+      this.closeDiagnostics.guacamoleStatus = Number(args[1]);
+    }
+    handleInstruction(opcode, args);
+  };
   clearInterval(client.activityCheckInterval);
   client.activityCheckInterval = setInterval(() => {
     const timeout = client.state === client.STATE_OPEN
@@ -85,6 +117,8 @@ ClientConnection.prototype.connect = function connectWithIdleGrace(options) {
   const keepalive = setInterval(() => {
     if (client.state === client.STATE_OPEN && this.webSocket.readyState === this.webSocket.OPEN) {
       client.sendInstruction(['nop']);
+      this.closeDiagnostics.keepaliveAttempts = (this.closeDiagnostics.keepaliveAttempts || 0) + 1;
+      this.closeDiagnostics.lastKeepaliveAt = Date.now();
     }
   }, 3000);
   keepalive.unref();
@@ -291,6 +325,19 @@ guacServer.on('open', (clientConnection) => {
 guacServer.on('close', (clientConnection) => {
   const metadata = getConnectionMetadata(clientConnection);
   if (!metadata.sessionId || !metadata.role) return;
+  console.log('[WebRDP] 连接关闭诊断:', JSON.stringify({
+    connectionId: clientConnection.connectionId,
+    role: metadata.role,
+    source: clientConnection.closeDiagnostics?.source || 'unknown',
+    websocketCode: clientConnection.closeDiagnostics?.websocketCode,
+    guacamoleStatus: clientConnection.closeDiagnostics?.guacamoleStatus,
+    error: clientConnection.closeDiagnostics?.error,
+    keepaliveAttempts: clientConnection.closeDiagnostics?.keepaliveAttempts || 0,
+    sinceKeepaliveMs: clientConnection.closeDiagnostics?.lastKeepaliveAt
+      ? Math.max(0, Date.now() - clientConnection.closeDiagnostics.lastKeepaliveAt) : undefined,
+    guacdIdleMs: clientConnection.guacdClient
+      ? Math.max(0, Date.now() - clientConnection.guacdClient.lastActivity) : undefined,
+  }));
   if (metadata.role === 'primary') {
     sessions.primaryClosed(metadata.sessionId, metadata.participantId, metadata.participantSecret, clientConnection.connectionId);
     broadcastSessionState(metadata.sessionId);
@@ -320,6 +367,7 @@ server.listen(PORT, () => {
   console.log(`[WebRDP] guacd: ${GUACD_HOST}:${GUACD_PORT}`);
   console.log(`[WebRDP] 最大协作人数: ${MAX_VIEWERS + 1}`);
   console.log(`[WebRDP] 主连接重连宽限: ${PRIMARY_RECONNECT_GRACE_MS}ms`);
+  console.log('[WebRDP] 浏览器用户 guacd 保活已启用: 3000ms');
 });
 
 function createPrimaryResponse(session, rdp) {
@@ -351,6 +399,7 @@ async function openSessionAnchor(session, rdp) {
       callbacks.sessionRegistry.delete(anchor.client.guacamoleConnectionId);
     }
     if (session.anchor !== anchor || session.state === 'closed') return;
+    console.warn('[WebRDP] 服务端 RDP 主连接已中断');
     session.anchor = null;
     sessions.controllerClosed(session.roomId, session.guacdConnectionId);
     closeSessionConnections(session.roomId);

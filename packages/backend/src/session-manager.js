@@ -47,6 +47,8 @@ class SessionManager {
       primaryParticipantId: crypto.randomBytes(16).toString('base64url'),
       primaryParticipantSecret: crypto.randomBytes(32).toString('base64url'),
       primaryConnected: false,
+      primaryConnectionId: null,
+      anchor: null,
       pendingViewers: new Map(),
       viewers: new Map(),
       controlHolderId: null,
@@ -64,6 +66,7 @@ class SessionManager {
     const session = this.sessions.get(roomId);
     if (!session || this.isExpired(session)) {
       this.connectionIndex.delete(connectionKey);
+      session?.anchor?.close();
       if (session) this.sessions.delete(roomId);
       return null;
     }
@@ -109,6 +112,39 @@ class SessionManager {
     session.resumePendingUntil = 0;
     this.renew(session);
     return session;
+  }
+
+  activateAnchor(roomId, guacdConnectionId) {
+    const session = this.require(roomId);
+    if (!guacdConnectionId) throw this.error(500, 'guacd did not return a connection ID');
+    session.guacdConnectionId = guacdConnectionId;
+    session.state = 'active';
+    session.primaryConnected = false;
+    session.reconnectUntil = this.now() + this.reconnectGraceMs;
+    return session;
+  }
+
+  primaryOpened(roomId, participantId, participantSecret, connectionId) {
+    const session = this.requireActive(roomId);
+    this.authenticatePrimary(session, participantId, participantSecret);
+    if (session.primaryConnected) throw this.error(409, 'Primary already connected');
+    session.primaryConnected = true;
+    session.primaryConnectionId = connectionId;
+    session.resumePendingUntil = 0;
+    session.reconnectUntil = null;
+    return session;
+  }
+
+  primaryClosed(roomId, participantId, participantSecret, connectionId) {
+    const session = this.sessions.get(roomId);
+    if (!session || session.state !== 'active'
+      || participantId !== session.primaryParticipantId
+      || connectionId !== session.primaryConnectionId
+      || !this.safeEqual(participantSecret, session.primaryParticipantSecret)) return;
+    session.primaryConnected = false;
+    session.primaryConnectionId = null;
+    session.resumePendingUntil = 0;
+    session.reconnectUntil = this.now() + this.reconnectGraceMs;
   }
 
   createJoin(roomId) {
@@ -172,7 +208,8 @@ class SessionManager {
 
   resumePrimary(roomId, ownerSecret) {
     const session = this.require(roomId);
-    if (session.state !== 'reconnecting' || session.reconnectUntil <= this.now()) {
+    if (!((session.state === 'reconnecting' && session.reconnectUntil > this.now())
+      || (session.state === 'active' && !session.primaryConnected))) {
       throw this.error(409, 'Primary session is not waiting for reconnection');
     }
     if (!this.safeEqual(session.ownerSecret, ownerSecret)) {
@@ -183,7 +220,8 @@ class SessionManager {
   }
 
   resumePrimaryByConnection(session) {
-    if (!session || session.state !== 'reconnecting' || session.reconnectUntil <= this.now()) {
+    if (!session || !((session.state === 'reconnecting' && session.reconnectUntil > this.now())
+      || (session.state === 'active' && !session.primaryConnected))) {
       throw this.error(409, 'Primary session is not waiting for reconnection');
     }
     this.reservePrimaryResume(session);
@@ -226,6 +264,7 @@ class SessionManager {
     return Boolean(
       session
       && session.state === 'active'
+      && (participantId !== session.primaryParticipantId || session.primaryConnected)
       && session.controlHolderId === participantId,
     );
   }
@@ -236,6 +275,8 @@ class SessionManager {
       throw this.error(403, 'Not authorized to end this shared session');
     }
     session.state = 'closed';
+    session.anchor?.close();
+    session.anchor = null;
     session.guacdConnectionId = null;
     session.primaryConnected = false;
     session.pendingViewers.clear();
@@ -284,6 +325,7 @@ class SessionManager {
     for (const [roomId, session] of this.sessions.entries()) {
       this.prunePending(session);
       if (this.isExpired(session)) {
+        session.anchor?.close();
         this.removeConnectionIndex(session);
         this.sessions.delete(roomId);
         removed += 1;
@@ -324,7 +366,8 @@ class SessionManager {
 
   isExpired(session) {
     if (session.state === 'closed') return true;
-    if (session.state === 'active') return false;
+    if (session.state === 'active') return Boolean(session.anchor && !session.primaryConnected
+      && session.viewers.size === 0 && session.reconnectUntil && session.reconnectUntil <= this.now());
     if (session.state === 'creating') {
       return session.createdAt + this.pendingTtlMs <= this.now();
     }

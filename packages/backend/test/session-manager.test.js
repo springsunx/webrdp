@@ -80,6 +80,34 @@ test('returns control to the primary participant when a temporary controller clo
   assert.equal(manager.hasControl(session.roomId, session.primaryParticipantId), true);
 });
 
+test('server anchor survives primary disconnect and expires only after everyone leaves', () => {
+  let now = 10_000;
+  let closed = 0;
+  const manager = new SessionManager({ ttlMs: 1000, maxViewers: 2, reconnectGraceMs: 500, now: () => now });
+  const session = manager.create('anchored');
+  session.anchor = { close() { closed += 1; } };
+  manager.activateAnchor(session.roomId, '$anchor');
+  manager.primaryOpened(session.roomId, session.primaryParticipantId, session.primaryParticipantSecret, 1);
+  const viewer = manager.createJoin(session.roomId);
+  manager.viewerOpened(session.roomId, viewer.participantId, viewer.participantSecret);
+  manager.primaryClosed(session.roomId, session.primaryParticipantId, session.primaryParticipantSecret, 99);
+  assert.equal(session.primaryConnected, true);
+  manager.primaryClosed(session.roomId, session.primaryParticipantId, session.primaryParticipantSecret, 1);
+  now += 501;
+  assert.equal(manager.cleanupExpired(), 0);
+  assert.equal(session.state, 'active');
+  assert.equal(manager.getPublic(session.roomId, viewer.participantId, viewer.participantSecret).viewerCount, 1);
+  manager.resumePrimary(session.roomId, session.ownerSecret);
+  manager.primaryOpened(session.roomId, session.primaryParticipantId, session.primaryParticipantSecret, 2);
+  manager.primaryClosed(session.roomId, session.primaryParticipantId, session.primaryParticipantSecret, 1);
+  assert.equal(session.primaryConnected, true);
+  manager.primaryClosed(session.roomId, session.primaryParticipantId, session.primaryParticipantSecret, 2);
+  manager.viewerClosed(session.roomId, viewer.participantId);
+  now += 501;
+  assert.equal(manager.cleanupExpired(), 1);
+  assert.equal(closed, 1);
+});
+
 test('renews an active primary lease and allows reconnection within the grace period', () => {
   let now = 10_000;
   const manager = new SessionManager({

@@ -112,8 +112,9 @@ environment:
   - GUACAMOLE_MAX_INACTIVITY_MS=0
 ```
 
-主连接处于活动状态时不按固定 TTL 清理，因此不会在固定时长后从会话表消失。
-异常断线后可在 `PRIMARY_RECONNECT_GRACE_MS` 时间内自动恢复；值 `86400000` 表示 24 小时。
+服务端独立持有 guacd 主连接。浏览器断线或手机锁屏时，服务端连接及其他观看者保持在线；主用户返回后重新加入同一会话。
+所有浏览器均离线时，会话最多保留 `PRIMARY_RECONNECT_GRACE_MS`；默认 `86400000` 表示 24 小时，超时后自动关闭以释放资源。仍有观看者在线时不会因该时限清理。
+应用进程、guacd 或 Windows RDP 服务重启时，网络连接无法保留，需重新建立。主动结束会话会立即关闭服务端连接。
 `GUACAMOLE_MAX_INACTIVITY_MS=0` 表示禁用应用层空闲断开，Windows RDP 服务端策略仍然生效。
 
 ## 🛠️ 开发

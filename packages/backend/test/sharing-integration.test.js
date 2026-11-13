@@ -64,11 +64,13 @@ test('same credential entry joins one session and temporary control returns to p
   const selected = [];
   const handshakeReplies = [];
   const postReadyMessages = [];
+  const guacdSockets = [];
   let connectionNumber = 0;
 
   const fakeGuacd = net.createServer((socket) => {
     connectionNumber += 1;
     const connectionIndex = connectionNumber - 1;
+    guacdSockets[connectionIndex] = socket;
     let transcript = '';
     let argsSent = false;
     let readySent = false;
@@ -96,10 +98,13 @@ test('same credential entry joins one session and temporary control returns to p
       }
       if (!readySent && transcript.includes('7.connect')) {
         handshakeReplies.push(transcript);
-        setTimeout(() => socket.write(instruction([
-          'ready',
-          connectionNumber === 1 ? sharedConnectionId : `$fake-participant-${connectionNumber}`,
-        ])), 100);
+        setTimeout(() => {
+          socket.write(instruction([
+            'ready',
+            connectionIndex === 0 ? sharedConnectionId : `$fake-participant-${connectionIndex}`,
+          ]));
+          if (connectionIndex === 0) socket.write(instruction(['sync', '1234']));
+        }, 100);
         readySent = true;
       }
     });
@@ -192,13 +197,14 @@ test('same credential entry joins one session and temporary control returns to p
     return session.viewerCount === 1;
   });
 
-  assert.deepEqual(selected, ['rdp', sharedConnectionId]);
-  assert.doesNotMatch(handshakeReplies[1], /4.true/);
+  assert.deepEqual(selected, ['rdp', sharedConnectionId, sharedConnectionId]);
+  await waitFor(() => postReadyMessages[0].includes(instruction(['sync', '1234'])));
+  assert.doesNotMatch(handshakeReplies[2], /4.true/);
 
   const participantKey = instruction(['key', '1', '65']);
   participantSocket.send(participantKey);
   await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.doesNotMatch(postReadyMessages[1], /3.key/);
+  assert.doesNotMatch(postReadyMessages[2], /3.key/);
 
   const takeResponse = await fetch(
     `http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}/control`,
@@ -208,11 +214,11 @@ test('same credential entry joins one session and temporary control returns to p
   assert.equal((await takeResponse.json()).hasControl, true);
 
   participantSocket.send(participantKey);
-  await waitFor(() => postReadyMessages[1].includes('3.key'));
+  await waitFor(() => postReadyMessages[2].includes('3.key'));
 
   primarySocket.send(instruction(['key', '1', '66']));
   await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.doesNotMatch(postReadyMessages[0], /3.key/);
+  assert.doesNotMatch(postReadyMessages[1], /3.key/);
 
   const reclaimResponse = await fetch(
     `http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}/control`,
@@ -225,11 +231,11 @@ test('same credential entry joins one session and temporary control returns to p
   )));
 
   primarySocket.send(instruction(['key', '1', '67']));
-  await waitFor(() => postReadyMessages[0].includes('3.key'));
-  const participantMessageLength = postReadyMessages[1].length;
+  await waitFor(() => postReadyMessages[1].includes('3.key'));
+  const participantMessageLength = postReadyMessages[2].length;
   participantSocket.send(instruction(['key', '1', '68']));
   await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.equal(postReadyMessages[1].length, participantMessageLength);
+  assert.equal(postReadyMessages[2].length, participantMessageLength);
 
   const retakeResponse = await fetch(
     `http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}/control`,
@@ -237,28 +243,17 @@ test('same credential entry joins one session and temporary control returns to p
   );
   assert.equal(retakeResponse.status, 200);
 
-  const participantClosed = waitForClose(participantSocket);
-  participantSocket.close();
-  await participantClosed;
-  participantSocket = null;
-  await waitFor(async () => {
-    const response = await fetch(`http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}`, {
-      headers: identityHeaders(primary),
-    });
-    const session = await response.json();
-    return session.viewerCount === 0 && session.hasControl;
-  });
-
   const disconnectedPrimary = waitForClose(primarySocket);
   primarySocket.close();
   await disconnectedPrimary;
   primarySocket = null;
+  assert.equal(guacdSockets[0].destroyed, false);
   await waitFor(async () => {
     const response = await fetch(`http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}`, {
-      headers: identityHeaders(primary),
+      headers: identityHeaders(participant),
     });
     const session = await response.json();
-    return session.state === 'reconnecting' && !session.hasControl;
+    return session.state === 'active' && session.viewerCount === 1 && session.hasControl;
   });
 
   const resumeResponse = await fetch(
@@ -275,6 +270,7 @@ test('same credential entry joins one session and temporary control returns to p
   assert.equal(resumeResponse.status, 200);
   const resumedPrimary = await resumeResponse.json();
   assert.equal(resumedPrimary.role, 'controller');
+  assert.equal(resumedPrimary.hasControl, false);
   assert.equal(resumedPrimary.createdAt, primary.createdAt);
   primarySocket = await openWebSocket(
     `ws://127.0.0.1:${appPort}/?token=${encodeURIComponent(resumedPrimary.token)}`,
@@ -284,7 +280,20 @@ test('same credential entry joins one session and temporary control returns to p
       headers: identityHeaders(resumedPrimary),
     });
     const session = await response.json();
-    return session.state === 'active' && session.hasControl;
+    return session.state === 'active' && session.viewerCount === 1;
+  });
+
+  assert.deepEqual(selected, ['rdp', sharedConnectionId, sharedConnectionId, sharedConnectionId]);
+  const participantClosed = waitForClose(participantSocket);
+  participantSocket.close();
+  await participantClosed;
+  participantSocket = null;
+  await waitFor(async () => {
+    const response = await fetch(`http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}`, {
+      headers: identityHeaders(resumedPrimary),
+    });
+    const session = await response.json();
+    return session.viewerCount === 0 && session.hasControl;
   });
 
   const primaryClosed = waitForClose(primarySocket);
@@ -294,4 +303,5 @@ test('same credential entry joins one session and temporary control returns to p
   );
   assert.equal(deleteResponse.status, 204);
   await primaryClosed;
+  await waitFor(() => guacdSockets[0].destroyed);
 });

@@ -8,6 +8,7 @@ const GuacamoleLite = require('guacamole-lite');
 const ClientConnection = require('guacamole-lite/lib/ClientConnection');
 
 const SessionManager = require('./session-manager');
+const SessionAnchor = require('./session-anchor');
 
 const PORT = parseInteger(process.env.PORT, 3000, 1, 65535);
 const GUACD_HOST = process.env.GUACD_HOST || 'localhost';
@@ -84,7 +85,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-app.post('/api/sessions', (req, res) => {
+app.post('/api/sessions', async (req, res) => {
   try {
     const rdp = normalizeRdpSettings(req.body);
     const connectionKey = createConnectionKey(rdp);
@@ -97,11 +98,18 @@ app.post('/api/sessions', (req, res) => {
       if (opened.session.state === 'reconnecting') {
         const session = sessions.resumePrimaryByConnection(opened.session);
         session.connectionSettings = rdp;
+        await openSessionAnchor(session, rdp);
         return res.json(createPrimaryResponse(session, rdp));
       }
       return res.json(createParticipantResponse(opened.session.roomId, req.body));
     }
 
+    try {
+      await openSessionAnchor(opened.session, rdp);
+    } catch (error) {
+      sessions.end(opened.session.roomId, opened.session.ownerSecret);
+      throw error;
+    }
     return res.status(201).json(createPrimaryResponse(opened.session, rdp));
   } catch (error) {
     return sendApiError(res, error);
@@ -131,7 +139,7 @@ app.post('/api/sessions/:roomId/join', (req, res) => {
   }
 });
 
-app.post('/api/sessions/:roomId/resume', (req, res) => {
+app.post('/api/sessions/:roomId/resume', async (req, res) => {
   try {
     const session = sessions.resumePrimary(
       req.params.roomId,
@@ -140,6 +148,7 @@ app.post('/api/sessions/:roomId/resume', (req, res) => {
     const display = normalizeDisplaySettings(req.body);
     const rdp = { ...session.connectionSettings, ...display };
     session.connectionSettings = rdp;
+    if (session.state === 'reconnecting') await openSessionAnchor(session, rdp);
     return res.json(createPrimaryResponse(session, rdp));
   } catch (error) {
     return sendApiError(res, error);
@@ -225,11 +234,11 @@ guacServer.on('open', (clientConnection) => {
   if (!metadata.sessionId || !metadata.role) return;
   try {
     if (metadata.role === 'primary') {
-      sessions.activate(
+      sessions.primaryOpened(
         metadata.sessionId,
-        clientConnection.guacamoleConnectionId,
         metadata.participantId,
         metadata.participantSecret,
+        clientConnection.connectionId,
       );
       console.log(`[WebRDP] 主会话已激活: ${metadata.sessionId}`);
     } else if (metadata.role === 'participant') {
@@ -251,7 +260,8 @@ guacServer.on('close', (clientConnection) => {
   const metadata = getConnectionMetadata(clientConnection);
   if (!metadata.sessionId || !metadata.role) return;
   if (metadata.role === 'primary') {
-    sessions.controllerClosed(metadata.sessionId, clientConnection.guacamoleConnectionId);
+    sessions.primaryClosed(metadata.sessionId, metadata.participantId, metadata.participantSecret, clientConnection.connectionId);
+    broadcastSessionState(metadata.sessionId);
     console.log(`[WebRDP] 主连接已关闭: ${metadata.sessionId}`);
   } else if (metadata.role === 'participant') {
     sessions.viewerClosed(metadata.sessionId, metadata.participantId);
@@ -287,7 +297,7 @@ function createPrimaryResponse(session, rdp) {
     participantId: session.primaryParticipantId,
     participantSecret: session.primaryParticipantSecret,
     role: 'primary',
-    connection: { type: 'rdp', settings: rdp },
+    connection: { join: session.guacdConnectionId, settings: { ...normalizeDisplaySettings(rdp), 'read-only': false } },
   });
   return {
     roomId: session.roomId,
@@ -295,12 +305,37 @@ function createPrimaryResponse(session, rdp) {
     participantSecret: session.primaryParticipantSecret,
     ownerSecret: session.ownerSecret,
     role: 'controller',
-    hasControl: true,
+    hasControl: session.controlHolderId === session.primaryParticipantId,
     createdAt: session.createdAt,
     expiresAt: session.expiresAt,
     reconnectGraceMs: PRIMARY_RECONNECT_GRACE_MS,
     token,
   };
+}
+
+async function openSessionAnchor(session, rdp) {
+  const anchor = new SessionAnchor(guacdOptions, rdp, () => {
+    if (anchor.client.guacamoleConnectionId) {
+      callbacks.sessionRegistry.delete(anchor.client.guacamoleConnectionId);
+    }
+    if (session.anchor !== anchor || session.state === 'closed') return;
+    session.anchor = null;
+    sessions.controllerClosed(session.roomId, session.guacdConnectionId);
+    closeSessionConnections(session.roomId);
+  });
+  session.anchor = anchor;
+  const connectionId = await anchor.ready();
+  if (session.anchor !== anchor || session.state === 'closed') {
+    anchor.close();
+    throw apiError(409, 'Session was closed while connecting');
+  }
+  callbacks.sessionRegistry.set(connectionId, {
+    guacdHost: GUACD_HOST,
+    guacdPort: GUACD_PORT,
+    createdAt: new Date().toISOString(),
+    joinedConnections: [],
+  });
+  sessions.activateAnchor(session.roomId, connectionId);
 }
 
 function createParticipantResponse(roomId, displaySettings) {
@@ -414,7 +449,7 @@ function validateConnectionToken(settings) {
     throw apiError(404, '共享会话不存在或已结束');
   }
   if (role === 'primary') {
-    if (!['creating', 'reconnecting'].includes(session.state)) {
+    if (session.state !== 'active' || session.primaryConnected) {
       throw apiError(409, '主会话已经连接');
     }
     sessions.authenticatePrimary(
@@ -422,6 +457,10 @@ function validateConnectionToken(settings) {
       settings.participantId,
       settings.participantSecret,
     );
+    if (settings.connection?.join !== session.guacdConnectionId
+      || [true, 'true'].includes(settings.connection?.['read-only'])) {
+      throw apiError(403, '主用户必须加入现有 Guacamole 会话');
+    }
   }
   if (role === 'participant') {
     if (session.state !== 'active') throw apiError(409, '共享会话尚未就绪');

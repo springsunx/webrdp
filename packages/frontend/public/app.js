@@ -324,6 +324,8 @@ class WebRDPLite {
             this.clearDisplay();
             const tunnelUrl = `${this.getWebSocketUrl()}?token=${encodeURIComponent(token)}`;
             this.tunnel = new Guacamole.WebSocketTunnel(tunnelUrl);
+            // Allow short background timer pauses before declaring the tunnel lost.
+            this.tunnel.receiveTimeout = 60_000;
             this.tunnel.onerror = (status) => {
                 this.handleRemoteError(status.message || '远程隧道错误');
             };

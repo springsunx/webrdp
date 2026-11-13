@@ -201,6 +201,12 @@ test('same credential entry joins one session and temporary control returns to p
   await waitFor(() => postReadyMessages[0].includes(instruction(['sync', '1234'])));
   assert.doesNotMatch(handshakeReplies[2], /4.true/);
 
+  // Fake guacd emits no further data: both browser tunnels must survive
+  // beyond guacamole-lite's original ten-second idle timeout.
+  await new Promise((resolve) => setTimeout(resolve, 11_500));
+  assert.equal(primarySocket.readyState, WebSocket.OPEN);
+  assert.equal(participantSocket.readyState, WebSocket.OPEN);
+
   const participantKey = instruction(['key', '1', '65']);
   participantSocket.send(participantKey);
   await new Promise((resolve) => setTimeout(resolve, 100));

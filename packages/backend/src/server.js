@@ -37,6 +37,12 @@ const GUACAMOLE_MAX_INACTIVITY_MS = parseInteger(
   0,
   60 * 60 * 1000,
 );
+const GUACD_BROWSER_IDLE_TIMEOUT_MS = parseInteger(
+  process.env.GUACD_BROWSER_IDLE_TIMEOUT_MS,
+  60 * 1000,
+  10 * 1000,
+  10 * 60 * 1000,
+);
 const MAX_VIEWERS = parseInteger(process.env.MAX_VIEWERS, 20, 1, 500);
 const COLLABORATION_MESSAGE_ID = 0x0100;
 const TOKEN_ENCRYPTION_KEY = loadEncryptionKey();
@@ -57,6 +63,23 @@ ClientConnection.prototype.sendMessageToGuacd = function guardedClientMessage(me
     || isPassiveClientMessage(message)) {
     forwardClientMessage.call(this, message);
   }
+};
+
+// guacamole-lite otherwise closes every browser's guacd socket after ten
+// seconds without upstream traffic, even while the browser is briefly paused.
+const connectClient = ClientConnection.prototype.connect;
+ClientConnection.prototype.connect = function connectWithIdleGrace(options) {
+  connectClient.call(this, options);
+  const client = this.guacdClient;
+  clearInterval(client.activityCheckInterval);
+  client.activityCheckInterval = setInterval(() => {
+    const timeout = client.state === client.STATE_OPEN
+      ? GUACD_BROWSER_IDLE_TIMEOUT_MS : 10_000;
+    if (Date.now() > client.lastActivity + timeout) {
+      client.close(new Error('guacd was inactive for too long'));
+    }
+  }, 1000);
+  client.activityCheckInterval.unref();
 };
 
 const app = express();

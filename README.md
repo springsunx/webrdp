@@ -110,12 +110,14 @@ environment:
   - SESSION_TTL_MS=28800000
   - PRIMARY_RECONNECT_GRACE_MS=86400000
   - GUACAMOLE_MAX_INACTIVITY_MS=0
+  - GUACD_BROWSER_IDLE_TIMEOUT_MS=60000
 ```
 
 服务端独立持有 guacd 主连接。浏览器断线或手机锁屏时，服务端连接及其他观看者保持在线；主用户返回后重新加入同一会话。
 所有浏览器均离线时，会话最多保留 `PRIMARY_RECONNECT_GRACE_MS`；默认 `86400000` 表示 24 小时，超时后自动关闭以释放资源。仍有观看者在线时不会因该时限清理。
 应用进程、guacd 或 Windows RDP 服务重启时，网络连接无法保留，需重新建立。主动结束会话会立即关闭服务端连接。
 `GUACAMOLE_MAX_INACTIVITY_MS=0` 表示禁用应用层空闲断开，Windows RDP 服务端策略仍然生效。
+`GUACD_BROWSER_IDLE_TIMEOUT_MS` 控制浏览器连接在 guacd 无响应时的等待时间，默认 60 秒；浏览器隧道同样等待 60 秒。手机系统仍可能主动中断后台连接，恢复前台后会自动重新加入。
 
 ## 🛠️ 开发
 

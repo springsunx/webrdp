@@ -118,6 +118,7 @@ environment:
 应用进程、guacd 或 Windows RDP 服务重启时，网络连接无法保留，需重新建立。主动结束会话会立即关闭服务端连接。
 `GUACAMOLE_MAX_INACTIVITY_MS=0` 表示禁用应用层空闲断开，Windows RDP 服务端策略仍然生效。
 `GUACD_BROWSER_IDLE_TIMEOUT_MS` 控制浏览器连接在 guacd 无响应时的等待时间，默认 60 秒；浏览器隧道同样等待 60 秒。手机系统仍可能主动中断后台连接，恢复前台后会自动重新加入。
+浏览器连接仍然存在时，服务端每 3 秒向 guacd 发送 `nop`，避免手机后台暂停时因用户指令超时而被断开；画面同步确认仍由浏览器处理。
 
 ## 🛠️ 开发
 

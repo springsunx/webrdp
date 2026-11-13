@@ -80,6 +80,15 @@ ClientConnection.prototype.connect = function connectWithIdleGrace(options) {
     }
   }, 1000);
   client.activityCheckInterval.unref();
+  // Keep the guacd user input stream alive even if mobile browser timers are
+  // temporarily suspended. Do not acknowledge sync frames on its behalf.
+  const keepalive = setInterval(() => {
+    if (client.state === client.STATE_OPEN && this.webSocket.readyState === this.webSocket.OPEN) {
+      client.sendInstruction(['nop']);
+    }
+  }, 3000);
+  keepalive.unref();
+  client.once('close', () => clearInterval(keepalive));
 };
 
 const app = express();

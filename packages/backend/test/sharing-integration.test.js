@@ -74,11 +74,21 @@ test('same credential entry joins one session and temporary control returns to p
     let transcript = '';
     let argsSent = false;
     let readySent = false;
+    let userIdleTimeout;
     postReadyMessages[connectionIndex] = '';
+
+    const resetUserIdleTimeout = () => {
+      clearTimeout(userIdleTimeout);
+      userIdleTimeout = setTimeout(() => socket.destroy(), 6500);
+    };
+    socket.on('close', () => clearTimeout(userIdleTimeout));
 
     socket.on('data', (chunk) => {
       const data = chunk.toString('utf8');
-      if (readySent) postReadyMessages[connectionIndex] += data;
+      if (readySent) {
+        postReadyMessages[connectionIndex] += data;
+        resetUserIdleTimeout();
+      }
       transcript += data;
       if (!argsSent && transcript.includes('6.select')) {
         selected.push(transcript.includes(sharedConnectionId) ? sharedConnectionId : 'rdp');
@@ -106,6 +116,7 @@ test('same credential entry joins one session and temporary control returns to p
           if (connectionIndex === 0) socket.write(instruction(['sync', '1234']));
         }, 100);
         readySent = true;
+        resetUserIdleTimeout();
       }
     });
   });
@@ -206,6 +217,8 @@ test('same credential entry joins one session and temporary control returns to p
   await new Promise((resolve) => setTimeout(resolve, 11_500));
   assert.equal(primarySocket.readyState, WebSocket.OPEN);
   assert.equal(participantSocket.readyState, WebSocket.OPEN);
+  assert.ok(postReadyMessages[1].includes(instruction(['nop'])));
+  assert.ok(postReadyMessages[2].includes(instruction(['nop'])));
 
   const participantKey = instruction(['key', '1', '65']);
   participantSocket.send(participantKey);
@@ -238,10 +251,9 @@ test('same credential entry joins one session and temporary control returns to p
 
   primarySocket.send(instruction(['key', '1', '67']));
   await waitFor(() => postReadyMessages[1].includes('3.key'));
-  const participantMessageLength = postReadyMessages[2].length;
   participantSocket.send(instruction(['key', '1', '68']));
   await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.equal(postReadyMessages[2].length, participantMessageLength);
+  assert.doesNotMatch(postReadyMessages[2], /2\.68/);
 
   const retakeResponse = await fetch(
     `http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}/control`,

@@ -51,6 +51,8 @@ http://localhost:3000/#host=YOUR_RDP_HOST&port=3389&user=YOUR_USER&password=YOUR
 
 完整凭据放在 URL Fragment（# 后）。第一个用户成为主用户，后续用户自动观看并可点击接管：
 
+连接后会保留 URL 中的凭据（兼容查询参数和 Fragment），刷新时可重新读取密码，用于会话恢复或失效后重建。密码不会额外写入本地存储；带密码的链接请仅分享给可信用户。点击返回登录页时会清除 URL 参数。
+
 ```
 http://localhost:3000/#host=192.168.1.100&port=3389&user=admin&password=YOUR_PASSWORD&width=1920&height=1080&title=我的电脑
 ```

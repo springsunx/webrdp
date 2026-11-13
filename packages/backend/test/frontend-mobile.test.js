@@ -237,6 +237,35 @@ test('control push immediately updates a reclaimed viewer toolbar', () => {
   assert.equal(app.controlState.textContent, '观看');
 });
 
+test('credential URLs retain query and fragment passwords during initialization', () => {
+  for (const fragment of [false, true]) {
+    const context = loadFrontendClass();
+    context.setTimeout = () => 0;
+    const params = new URLSearchParams({
+      host: '192.0.2.10', user: 'test-user', password: 'p&+# 中文',
+    });
+    const originalUrl = `https://example.test/${fragment ? '#' : '?'}${params}`;
+    context.window.location = new URL(originalUrl);
+    context.window.history = {
+      replaceState() { assert.fail('credential URL must be retained'); },
+    };
+    const app = Object.create(context.WebRDPLite.prototype);
+    app.resumeStorageKey = 'webrdp-primary-resume';
+    for (const name of ['host', 'port', 'user', 'width', 'height']) {
+      app[`${name}Input`] = { value: '' };
+    }
+    app.calculateOptimalResolution = () => ({ width: 1280, height: 720 });
+    app.loadSavedParams = () => {};
+    app.setTitle = () => {};
+    app.showDesktop = () => {};
+
+    app.initialize();
+
+    assert.equal(app.connectionParams.password, 'p&+# 中文');
+    assert.equal(context.window.location.href, originalUrl);
+  }
+});
+
 test('primary reconnect state survives refresh without storing the RDP password', () => {
   const context = loadFrontendClass();
   context.setTimeout = () => 0;
@@ -276,6 +305,21 @@ test('primary reconnect state survives refresh without storing the RDP password'
   assert.equal(restored.connectionParams.password, undefined);
   assert.equal(restored.connectionParams.width, '1280');
   assert.equal(restored.desktopShown, true);
+
+  const urlParams = new URLSearchParams({
+    host: '192.0.2.10', user: 'test-user', password: 'password-from-url',
+  });
+  assert.equal(restored.restorePrimarySession({ width: 1280, height: 720 }, urlParams), true);
+  assert.equal(restored.connectionParams.password, 'password-from-url');
+  restored.role = 'controller';
+  restored.persistPrimaryResume();
+  assert.equal(JSON.parse(context.sessionStorage.getItem(app.resumeStorageKey)).connectionParams.password, undefined);
+
+  for (const [field, value] of [['host', '192.0.2.11'], ['user', 'another-user'], ['port', '3390']]) {
+    const otherConnection = new URLSearchParams(urlParams);
+    otherConnection.set(field, value);
+    assert.equal(restored.restorePrimarySession({ width: 1280, height: 720 }, otherConnection), false);
+  }
 });
 
 test('an unexpected primary tunnel error schedules automatic reconnection', () => {

@@ -111,10 +111,10 @@ class WebRDPLite {
             return;
         }
 
-        if (this.restorePrimarySession(autoSize)) return;
+        const source = fragmentParams.has('host') ? fragmentParams : queryParams;
+        if (this.restorePrimarySession(autoSize, source)) return;
 
         this.loadSavedParams();
-        const source = fragmentParams.has('host') ? fragmentParams : queryParams;
         const host = source.get('host') || this.hostInput.value;
         const port = source.get('port') || this.portInput.value || '3389';
         const user = source.get('user') || this.userInput.value;
@@ -132,13 +132,11 @@ class WebRDPLite {
 
         if (host && user && password) {
             this.connectionParams = { host, port, user, password, width, height, title };
-            this.clearSensitiveLocation();
             this.showDesktop();
             setTimeout(() => this.connect(), 50);
             return;
         }
 
-        if (queryParams.has('password') || window.location.hash) this.clearSensitiveLocation();
     }
 
     getWebSocketUrl() {
@@ -189,10 +187,16 @@ class WebRDPLite {
         }));
     }
 
-    restorePrimarySession(autoSize) {
+    restorePrimarySession(autoSize, urlParams = new URLSearchParams()) {
         try {
             const saved = JSON.parse(sessionStorage.getItem(this.resumeStorageKey) || 'null');
             if (!saved?.roomId || !saved.ownerSecret || !saved.connectionParams) return false;
+            const urlHost = urlParams.get('host');
+            if (urlHost && (
+                urlHost !== saved.connectionParams.host
+                || urlParams.get('user') !== saved.connectionParams.user
+                || (urlParams.get('port') || '3389') !== String(saved.connectionParams.port || '3389')
+            )) return false;
             this.resumeSession = true;
             this.role = 'pending';
             this.session = {
@@ -204,6 +208,9 @@ class WebRDPLite {
                 width: String(autoSize.width),
                 height: String(autoSize.height),
             };
+            if (urlHost && urlParams.has('password')) {
+                this.connectionParams.password = urlParams.get('password');
+            }
             this.reconnectGraceMs = Number(saved.reconnectGraceMs) || this.reconnectGraceMs;
             this.hostInput.value = this.connectionParams.host || '';
             this.portInput.value = this.connectionParams.port || '3389';
@@ -266,16 +273,8 @@ class WebRDPLite {
         };
         this.passwordInput.value = '';
         this.saveParams();
-        this.clearSensitiveLocation();
         this.showDesktop();
         setTimeout(() => this.connect(), 50);
-    }
-
-    clearSensitiveLocation() {
-        const safeUrl = new URL(window.location.href);
-        safeUrl.searchParams.delete('password');
-        safeUrl.hash = '';
-        window.history.replaceState({}, '', safeUrl);
     }
 
     showDesktop() {

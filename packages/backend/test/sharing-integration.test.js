@@ -96,10 +96,10 @@ test('same credential entry joins one session and temporary control returns to p
       }
       if (!readySent && transcript.includes('7.connect')) {
         handshakeReplies.push(transcript);
-        socket.write(instruction([
+        setTimeout(() => socket.write(instruction([
           'ready',
           connectionNumber === 1 ? sharedConnectionId : `$fake-participant-${connectionNumber}`,
-        ]));
+        ])), 100);
         readySent = true;
       }
     });
@@ -179,6 +179,8 @@ test('same credential entry joins one session and temporary control returns to p
   participantSocket = await openWebSocket(
     `ws://127.0.0.1:${appPort}/?token=${encodeURIComponent(participant.token)}`,
   );
+  // A viewer must not be able to queue input while guacd is still handshaking.
+  participantSocket.send(instruction(['key', '65', '1']));
   participantSocket.on('message', (message) => {
     participantServerMessages.push(message.toString());
   });

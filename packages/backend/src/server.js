@@ -5,6 +5,7 @@ const path = require('path');
 
 const express = require('express');
 const GuacamoleLite = require('guacamole-lite');
+const ClientConnection = require('guacamole-lite/lib/ClientConnection');
 
 const SessionManager = require('./session-manager');
 
@@ -46,8 +47,24 @@ const sessions = new SessionManager({
   reconnectGraceMs: PRIMARY_RECONNECT_GRACE_MS,
 });
 
+// Install before ClientConnection registers its WebSocket listener. In particular,
+// input buffered while guacd is handshaking must never bypass authorization.
+const forwardClientMessage = ClientConnection.prototype.sendMessageToGuacd;
+ClientConnection.prototype.sendMessageToGuacd = function guardedClientMessage(message) {
+  const metadata = getConnectionMetadata(this);
+  if (sessions.hasControl(metadata.sessionId, metadata.participantId)
+    || isPassiveClientMessage(message)) {
+    forwardClientMessage.call(this, message);
+  }
+};
+
 const app = express();
 app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.set('Referrer-Policy', 'no-referrer');
+  if (req.path.startsWith('/api/')) res.set('Cache-Control', 'no-store');
+  next();
+});
 app.use(express.json({ limit: '32kb' }));
 
 const bundledPublicPath = path.join(__dirname, '../public');
@@ -223,7 +240,6 @@ guacServer.on('open', (clientConnection) => {
       );
       console.log(`[WebRDP] 协作参与者已加入: ${metadata.sessionId}`);
     }
-    installInputGuard(clientConnection, metadata);
     broadcastSessionState(metadata.sessionId);
   } catch (error) {
     console.error('[WebRDP] 更新会话打开状态失败:', error);
@@ -348,16 +364,6 @@ function encodeInstruction(parts) {
   return `${parts.map((part) => `${String(part).length}.${part}`).join(',')};`;
 }
 
-function installInputGuard(clientConnection, metadata) {
-  const forwardToGuacd = clientConnection.sendMessageToGuacd.bind(clientConnection);
-  clientConnection.sendMessageToGuacd = (message) => {
-    if (sessions.hasControl(metadata.sessionId, metadata.participantId)
-      || isPassiveClientMessage(message)) {
-      forwardToGuacd(message);
-    }
-  };
-}
-
 function isPassiveClientMessage(message) {
   const opcodes = parseInstructionOpcodes(message);
   return opcodes.length > 0
@@ -369,17 +375,24 @@ function parseInstructionOpcodes(message) {
   const opcodes = [];
   let position = 0;
   while (position < text.length) {
-    const dot = text.indexOf('.', position);
-    if (dot < 0) return [];
-    const elementLength = Number.parseInt(text.slice(position, dot), 10);
-    if (!Number.isInteger(elementLength) || elementLength < 0) return [];
-    const opcodeStart = dot + 1;
-    const opcodeEnd = opcodeStart + elementLength;
-    if (opcodeEnd > text.length) return [];
-    opcodes.push(text.slice(opcodeStart, opcodeEnd));
-    const instructionEnd = text.indexOf(';', opcodeEnd);
-    if (instructionEnd < 0) return [];
-    position = instructionEnd + 1;
+    let first = true;
+    let ended = false;
+    while (position < text.length && !ended) {
+      const dot = text.indexOf('.', position);
+      if (dot < 0 || !/^\d+$/.test(text.slice(position, dot))) return [];
+      const length = Number(text.slice(position, dot));
+      if (!Number.isSafeInteger(length)) return [];
+      const start = dot + 1;
+      const end = start + length;
+      if (end >= text.length) return [];
+      if (first) opcodes.push(text.slice(start, end));
+      first = false;
+      const delimiter = text[end];
+      if (delimiter !== ',' && delimiter !== ';') return [];
+      ended = delimiter === ';';
+      position = end + 1;
+    }
+    if (!ended) return [];
   }
   return opcodes;
 }
@@ -397,7 +410,7 @@ function validateConnectionToken(settings) {
   }
 
   const session = sessions.get(sessionId);
-  if (!session || session.state === 'closed' || session.expiresAt <= Date.now()) {
+  if (!session || sessions.isExpired(session)) {
     throw apiError(404, '共享会话不存在或已结束');
   }
   if (role === 'primary') {

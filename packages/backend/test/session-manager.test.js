@@ -117,6 +117,9 @@ test('renews an active primary lease and allows reconnection within the grace pe
 
   manager.resumePrimary(session.roomId, session.ownerSecret);
   assert.notEqual(session.primaryParticipantSecret, oldSecret);
+  const reservedSecret = session.primaryParticipantSecret;
+  assert.throws(() => manager.resumePrimary(session.roomId, session.ownerSecret), { status: 409 });
+  assert.equal(session.primaryParticipantSecret, reservedSecret);
   manager.activate(
     session.roomId,
     '$resumed-connection',

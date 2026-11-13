@@ -368,6 +368,7 @@ test('a lost backend session is recreated when the primary still has credentials
   app.role = 'controller';
   app.resumeSession = true;
   app.reconnectAttempt = 3;
+  app.controlVersion = 7;
   app.disconnectTunnel = () => { app.disconnected = true; };
   app.clearPrimaryResume = () => { app.resumeCleared = true; };
   app.resetConnectionClock = () => { app.clockReset = true; };
@@ -385,9 +386,55 @@ test('a lost backend session is recreated when the primary still has credentials
   assert.equal(app.role, 'pending');
   assert.equal(app.resumeSession, false);
   assert.equal(app.reconnectAttempt, 0);
+  assert.equal(app.controlVersion, -1);
   assert.equal(scheduledDelay, 250);
   assert.equal(app.lastStatus, 'connecting');
   assert.equal(app.lastMessage, '原会话已失效，正在重新建立主连接...');
+});
+
+test('late 404 after an intentional disconnect never starts a new connection', () => {
+  const context = loadFrontendClass();
+  const app = Object.create(context.WebRDPLite.prototype);
+  app.intentionalDisconnect = true;
+  app.role = 'controller';
+  app.connectionParams = { host: 'host', user: 'user', password: 'password' };
+  app.restartLostPrimarySession = () => { app.restarted = true; };
+  app.handleSessionPollError({ status: 404 });
+  assert.equal(app.restarted, undefined);
+});
+
+test('viewer tunnel failure schedules rejoining after background interruption', () => {
+  const context = loadFrontendClass();
+  let retry;
+  context.setTimeout = (fn) => { retry = fn; return 17; };
+  const app = Object.create(context.WebRDPLite.prototype);
+  app.intentionalDisconnect = false;
+  app.role = 'viewer';
+  app.session = { roomId: 'room' };
+  app.updateStatus = () => {};
+  app.connect = () => { app.reconnected = true; };
+  app.handleRemoteError('disconnected');
+  assert.equal(app.rejoinViewer, true);
+  retry();
+  assert.equal(app.reconnected, true);
+});
+
+test('returning online retries a disconnected primary but leaves a healthy tunnel alone', () => {
+  const context = loadFrontendClass();
+  const app = Object.create(context.WebRDPLite.prototype);
+  app.intentionalDisconnect = false;
+  app.reconnectInProgress = false;
+  app.role = 'controller';
+  app.session = { roomId: 'room', ownerSecret: 'secret' };
+  app.connectionStatus = 'connected';
+  app.tunnel = { isConnected: () => true };
+  app.schedulePrimaryReconnect = () => { app.retries = (app.retries || 0) + 1; };
+  app.resumeAfterBackground();
+  assert.equal(app.retries, undefined);
+  app.tunnel.isConnected = () => false;
+  app.resumeAfterBackground();
+  assert.equal(app.retries, 1);
+  assert.equal(app.resumeSession, true);
 });
 
 test('temporary status polling failures do not disconnect a healthy tunnel', () => {

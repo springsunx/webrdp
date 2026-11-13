@@ -43,6 +43,7 @@ class SessionManager {
       createdAt: now,
       expiresAt: now + this.ttlMs,
       reconnectUntil: null,
+      resumePendingUntil: 0,
       primaryParticipantId: crypto.randomBytes(16).toString('base64url'),
       primaryParticipantSecret: crypto.randomBytes(32).toString('base64url'),
       primaryConnected: false,
@@ -105,6 +106,7 @@ class SessionManager {
     session.primaryConnected = true;
     session.state = 'active';
     session.reconnectUntil = null;
+    session.resumePendingUntil = 0;
     this.renew(session);
     return session;
   }
@@ -155,11 +157,12 @@ class SessionManager {
 
   controllerClosed(roomId, guacdConnectionId = null) {
     const session = this.sessions.get(roomId);
-    if (!session) return;
+    if (!session || session.state === 'closed') return;
     if (guacdConnectionId && session.guacdConnectionId !== guacdConnectionId) return;
     session.state = 'reconnecting';
     session.guacdConnectionId = null;
     session.primaryConnected = false;
+    session.resumePendingUntil = 0;
     session.pendingViewers.clear();
     session.viewers.clear();
     this.restorePrimaryControl(session);
@@ -175,7 +178,7 @@ class SessionManager {
     if (!this.safeEqual(session.ownerSecret, ownerSecret)) {
       throw this.error(403, 'Not authorized to resume this shared session');
     }
-    this.rotatePrimarySecret(session);
+    this.reservePrimaryResume(session);
     return session;
   }
 
@@ -183,8 +186,16 @@ class SessionManager {
     if (!session || session.state !== 'reconnecting' || session.reconnectUntil <= this.now()) {
       throw this.error(409, 'Primary session is not waiting for reconnection');
     }
-    this.rotatePrimarySecret(session);
+    this.reservePrimaryResume(session);
     return session;
+  }
+
+  reservePrimaryResume(session) {
+    if (session.resumePendingUntil > this.now()) {
+      throw this.error(409, 'Primary reconnection is already in progress');
+    }
+    session.resumePendingUntil = this.now() + this.pendingTtlMs;
+    this.rotatePrimarySecret(session);
   }
 
   takeControl(roomId, participantId, participantSecret) {

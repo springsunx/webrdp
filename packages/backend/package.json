@@ -16,5 +16,10 @@
   "devDependencies": {
     "nodemon": "^3.0.2",
     "ws": "^8.18.3"
+  },
+  "overrides": {
+    "body-parser": "^1.20.9",
+    "proxy-addr": "^2.0.8",
+    "qs": "^6.17.1"
   }
 }

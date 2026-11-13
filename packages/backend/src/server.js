@@ -94,6 +94,10 @@ ClientConnection.prototype.connect = function connectWithIdleGrace(options) {
     this.closeDiagnostics.source ||= 'websocket';
     this.closeDiagnostics.websocketCode = code;
   });
+  this.webSocket.on('pong', () => {
+    this.closeDiagnostics.websocketPongs = (this.closeDiagnostics.websocketPongs || 0) + 1;
+    this.closeDiagnostics.lastPongAt = Date.now();
+  });
   client.prependListener('error', () => { this.closeDiagnostics.source ||= 'guacd'; });
   client.prependListener('close', () => { this.closeDiagnostics.source ||= 'guacd'; });
   const handleInstruction = client.parser.oninstruction;
@@ -119,6 +123,10 @@ ClientConnection.prototype.connect = function connectWithIdleGrace(options) {
       client.sendInstruction(['nop']);
       this.closeDiagnostics.keepaliveAttempts = (this.closeDiagnostics.keepaliveAttempts || 0) + 1;
       this.closeDiagnostics.lastKeepaliveAt = Date.now();
+      // A WebSocket ping also keeps reverse proxies aware of upstream traffic.
+      // Missing pongs are diagnostic only: background browsers may be paused.
+      this.closeDiagnostics.websocketPingAttempts = (this.closeDiagnostics.websocketPingAttempts || 0) + 1;
+      this.webSocket.ping(undefined, false, () => {});
     }
   }, 3000);
   keepalive.unref();
@@ -333,6 +341,10 @@ guacServer.on('close', (clientConnection) => {
     guacamoleStatus: clientConnection.closeDiagnostics?.guacamoleStatus,
     error: clientConnection.closeDiagnostics?.error,
     keepaliveAttempts: clientConnection.closeDiagnostics?.keepaliveAttempts || 0,
+    websocketPingAttempts: clientConnection.closeDiagnostics?.websocketPingAttempts || 0,
+    websocketPongs: clientConnection.closeDiagnostics?.websocketPongs || 0,
+    sincePongMs: clientConnection.closeDiagnostics?.lastPongAt
+      ? Math.max(0, Date.now() - clientConnection.closeDiagnostics.lastPongAt) : undefined,
     sinceKeepaliveMs: clientConnection.closeDiagnostics?.lastKeepaliveAt
       ? Math.max(0, Date.now() - clientConnection.closeDiagnostics.lastKeepaliveAt) : undefined,
     guacdIdleMs: clientConnection.guacdClient

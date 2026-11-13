@@ -39,9 +39,9 @@ async function waitFor(check, timeoutMs = 5000) {
   throw lastError || new Error('Timed out waiting for condition');
 }
 
-function openWebSocket(url) {
+function openWebSocket(url, options = {}) {
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(url);
+    const socket = new WebSocket(url, options);
     socket.once('open', () => resolve(socket));
     socket.once('error', reject);
   });
@@ -196,6 +196,7 @@ test('same credential entry joins one session and temporary control returns to p
 
   participantSocket = await openWebSocket(
     `ws://127.0.0.1:${appPort}/?token=${encodeURIComponent(participant.token)}`,
+    { autoPong: false },
   );
   // A viewer must not be able to queue input while guacd is still handshaking.
   participantSocket.send(instruction(['key', '65', '1']));
@@ -272,6 +273,9 @@ test('same credential entry joins one session and temporary control returns to p
   const browserCloseLog = serverLog.split('\n').find(line => line.includes('"source":"websocket"'));
   const browserClose = JSON.parse(browserCloseLog.slice(browserCloseLog.indexOf('{')));
   assert.ok(browserClose.keepaliveAttempts >= 3);
+  assert.ok(browserClose.websocketPingAttempts >= 3);
+  assert.ok(browserClose.websocketPongs >= 3);
+  assert.equal(typeof browserClose.sincePongMs, 'number');
   assert.equal(typeof browserClose.sinceKeepaliveMs, 'number');
   assert.doesNotMatch(browserCloseLog, /test-password|owner-secret|test-user/);
   await waitFor(async () => {
@@ -315,6 +319,10 @@ test('same credential entry joins one session and temporary control returns to p
   await participantClosed;
   participantSocket = null;
   await waitFor(() => serverLog.includes('"source":"guacd"'));
+  const guacdCloseLog = serverLog.split('\n').find(line => line.includes('"source":"guacd"'));
+  const guacdClose = JSON.parse(guacdCloseLog.slice(guacdCloseLog.indexOf('{')));
+  assert.ok(guacdClose.websocketPingAttempts >= 3);
+  assert.equal(guacdClose.websocketPongs, 0);
   await waitFor(async () => {
     const response = await fetch(`http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}`, {
       headers: identityHeaders(resumedPrimary),

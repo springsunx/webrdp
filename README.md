@@ -119,6 +119,7 @@ environment:
 `GUACAMOLE_MAX_INACTIVITY_MS=0` 表示禁用应用层空闲断开，Windows RDP 服务端策略仍然生效。
 `GUACD_BROWSER_IDLE_TIMEOUT_MS` 控制浏览器连接在 guacd 无响应时的等待时间，默认 60 秒；浏览器隧道同样等待 60 秒。手机系统仍可能主动中断后台连接，恢复前台后会自动重新加入。
 浏览器连接仍然存在时，服务端每 3 秒向 guacd 发送 `nop`，避免手机后台暂停时因用户指令超时而被断开；画面同步确认仍由浏览器处理。
+服务端还会发送 WebSocket ping，让反向代理在画面静止时持续收到流量；未收到 pong 不会触发服务端主动断开。
 
 ## 🛠️ 开发
 

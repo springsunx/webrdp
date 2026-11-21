@@ -31,6 +31,17 @@ docker compose up -d
 http://localhost:3000
 ```
 
+Compose 会构建基于 guacd 1.6.0 的修复镜像，回移 Apache Guacamole 的
+[GUACAMOLE-2221](https://issues.apache.org/jira/browse/GUACAMOLE-2221) 修复，
+降低 RDP 传输错误导致会话忙循环的风险。首次构建需要下载源码和编译依赖。
+重新部署 guacd 会断开当前所有远程会话。
+
+如果使用其他 Docker 管理工具而非仓库中的 Compose，必须把 **guacd 容器**也
+切换到对应分支构建的 `ghcr.io/springsunx/webrdp-guacd:<分支标签>` 镜像；
+仅更新 WebRDP 应用镜像不会包含此修复。部署前请确认镜像已经构建成功，
+并保留原 `guacamole/guacd:1.6.0` 配置以便回滚。此补丁针对特定故障，
+不能保证覆盖所有导致画面停滞的原因。
+
 ### 统一协作入口
 
 ```
@@ -127,10 +138,11 @@ environment:
 
 ```bash
 # 安装依赖
-cd packages/backend && npm install
+cd packages/backend && npm install && cd ../..
 
-# 启动 Guacd
-docker run -d --name guacd -p 4822:4822 guacamole/guacd:1.6.0
+# 构建并启动带修复的 Guacd
+docker build -f Dockerfile.guacd -t webrdp-guacd:1.6.0-guac-2221 .
+docker run -d --name guacd -p 4822:4822 webrdp-guacd:1.6.0-guac-2221
 
 # 启动后端
 cd packages/backend && npm run dev

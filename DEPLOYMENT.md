@@ -52,11 +52,15 @@ npm install
 # 前端
 cd ../frontend
 npm install
+
+# 返回项目根目录
+cd ../..
 ```
 
 2. **启动 Guacd**
 ```bash
-docker run -d --name guacd -p 4822:4822 guacamole/guacd:1.6.0
+docker build -f Dockerfile.guacd -t webrdp-guacd:1.6.0-guac-2221 .
+docker run -d --name guacd -p 4822:4822 webrdp-guacd:1.6.0-guac-2221
 ```
 
 3. **启动后端**

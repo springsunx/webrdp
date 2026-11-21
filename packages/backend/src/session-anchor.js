@@ -12,6 +12,9 @@ class SessionAnchor {
     this.parser = new GuacamoleParser();
     this.parser.oninstruction = (opcode, args) => {
       if (opcode === 'sync') this.client.sendInstruction(['sync', args[0]]);
+      // An error/disconnect instruction is terminal even if guacd leaves the
+      // TCP connection open while waiting for the client to disconnect.
+      else if (opcode === 'error' || opcode === 'disconnect') this.client.close();
       else if (['clipboard', 'file', 'pipe', 'audio'].includes(opcode)) {
         this.client.sendInstruction(['ack', args[0], 'Unsupported', 0x0100]);
       }

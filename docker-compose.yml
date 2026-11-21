@@ -1,6 +1,9 @@
 services:
   guacd:
-    image: guacamole/guacd:1.6.0
+    image: webrdp-guacd:1.6.0-guac-2221
+    build:
+      context: .
+      dockerfile: Dockerfile.guacd
     container_name: webrdp-guacd
     restart: unless-stopped
     networks:

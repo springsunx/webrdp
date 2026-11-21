@@ -331,12 +331,60 @@ test('same credential entry joins one session and temporary control returns to p
     return session.viewerCount === 0 && session.hasControl;
   });
 
-  const primaryClosed = waitForClose(primarySocket);
+  // Once guacd reports an upstream failure, the anchor must not leave a
+  // joinable stale session behind. The owner can create a fresh RDP anchor.
+  const primaryClosedAfterAnchorFailure = waitForClose(primarySocket);
+  // guacd may send a terminal error while leaving its TCP socket open.
+  guacdSockets[0].write(instruction(['error', 'Simulated upstream failure', '516']));
+  await primaryClosedAfterAnchorFailure;
+  primarySocket = null;
+  await waitFor(async () => {
+    const response = await fetch(`http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}`, {
+      headers: identityHeaders(resumedPrimary),
+    });
+    return (await response.json()).state === 'reconnecting';
+  });
+
+  const recoveredResponse = await fetch(
+    `http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}/resume`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-owner-secret': primary.ownerSecret,
+      },
+      body: JSON.stringify({ width: 1366, height: 768 }),
+    },
+  );
+  assert.equal(recoveredResponse.status, 200);
+  const recoveredPrimary = await recoveredResponse.json();
+  assert.equal(selected[4], 'rdp');
+  primarySocket = await openWebSocket(
+    `ws://127.0.0.1:${appPort}/?token=${encodeURIComponent(recoveredPrimary.token)}`,
+  );
+  await waitFor(async () => {
+    const response = await fetch(`http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}`, {
+      headers: identityHeaders(recoveredPrimary),
+    });
+    const session = await response.json();
+    return session.state === 'active' && session.hasControl;
+  });
+
+  const primaryClosedAfterDisconnect = waitForClose(primarySocket);
+  guacdSockets[4].write(instruction(['disconnect']));
+  await primaryClosedAfterDisconnect;
+  primarySocket = null;
+  await waitFor(async () => {
+    const response = await fetch(`http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}`, {
+      headers: identityHeaders(recoveredPrimary),
+    });
+    return (await response.json()).state === 'reconnecting';
+  });
+
   const deleteResponse = await fetch(
     `http://127.0.0.1:${appPort}/api/sessions/${primary.roomId}`,
     { method: 'DELETE', headers: { 'x-owner-secret': primary.ownerSecret } },
   );
   assert.equal(deleteResponse.status, 204);
-  await primaryClosed;
-  await waitFor(() => guacdSockets[0].destroyed);
+  await waitFor(() => guacdSockets[4].destroyed);
 });

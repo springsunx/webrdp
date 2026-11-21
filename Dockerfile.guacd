@@ -1,0 +1,28 @@
+# Rebuild the RDP plugin against the exact libraries bundled in the official
+# 1.6.0 image, preserving its runtime and all other protocol implementations.
+FROM guacamole/guacd:1.6.0 AS build
+USER root
+ARG ALPINE_MIRROR=https://dl-cdn.alpinelinux.org/alpine
+RUN sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${ALPINE_MIRROR}|g" /etc/apk/repositories \
+    && apk add --no-cache build-base autoconf automake libtool pkgconf curl patch \
+    cairo-dev pango-dev libjpeg-turbo-dev libpng-dev libwebp-dev \
+    openssl1.1-compat-dev libvorbis-dev libogg-dev pulseaudio-dev
+WORKDIR /build
+RUN curl --fail --location --retry 3 -o source.tar.gz \
+      https://downloads.apache.org/guacamole/1.6.0/source/guacamole-server-1.6.0.tar.gz \
+    && echo '8bc45675da96d7b6f39728160181e3d4ff3c08f460f6d26de5805b642bf13f2b  source.tar.gz' | sha256sum -c - \
+    && tar -xzf source.tar.gz --strip-components=1
+COPY guacd/guacamole-2221.patch /build/guacamole-2221.patch
+RUN patch --batch --forward --fuzz=0 -p1 < guacamole-2221.patch \
+    && PKG_CONFIG_PATH=/opt/guacamole/lib/pkgconfig \
+       CPPFLAGS='-I/opt/guacamole/include -Wno-error=deprecated-declarations' \
+       LDFLAGS='-L/opt/guacamole/lib' \
+       ./configure --prefix=/opt/guacamole --disable-guaclog \
+    && make -j2 \
+    && test -f src/protocols/rdp/.libs/libguac-client-rdp.so.0.0.0
+
+FROM guacamole/guacd:1.6.0
+USER root
+COPY --from=build /build/src/protocols/rdp/.libs/libguac-client-rdp.so.0.0.0 /opt/guacamole/lib/libguac-client-rdp.so.0.0.0
+RUN ldd /opt/guacamole/lib/libguac-client-rdp.so.0.0.0
+USER guacd

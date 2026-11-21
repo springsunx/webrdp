@@ -1,0 +1,49 @@
+From: Apache Guacamole contributors
+Subject: Backport GUACAMOLE-2221 to guacamole-server 1.6.0
+
+Based on upstream commit bf1b62d3c7a5aa3e76f45bd376491257e1f6c23a:
+https://github.com/apache/guacamole-server/pull/635
+
+The 1.6.0 source also needs connection_closing initialized before the new
+early break, because it is otherwise read uninitialized after that break.
+Abort on an outer wait error too: otherwise 1.6.0's outer connection loop
+immediately reconnects without notifying the attached users.
+
+--- a/src/protocols/rdp/rdp.c
++++ b/src/protocols/rdp/rdp.c
+@@ -466,6 +466,10 @@
+ 
+     }
+ 
++    /* Bail out if FreeRDP has recorded a connection error */
++    if (freerdp_get_last_error(GUAC_RDP_CONTEXT(rdp_inst)) != FREERDP_ERROR_SUCCESS)
++        return -1;
++
+     /* Wait was successful */
+     return 1;
+ 
+@@ -615,16 +619,21 @@
+         /* Wait for data and construct a reasonable frame */
+ 
+         int wait_result = rdp_guac_client_wait_for_events(client, GUAC_RDP_MESSAGE_CHECK_INTERVAL);
+-        if (wait_result < 0)
++        if (wait_result < 0) {
++            guac_client_abort(client, GUAC_PROTOCOL_STATUS_UPSTREAM_UNAVAILABLE,
++                    "Connection closed.");
+             break;
++        }
+ 
+-        int connection_closing;
++        int connection_closing = 0;
+         do {
+ 
+             /* Handle any queued FreeRDP events (this may result in RDP messages
+              * being sent), aborting later if FreeRDP event handling fails */
+-            if (!guac_rdp_handle_events(rdp_client))
++            if (!guac_rdp_handle_events(rdp_client)) {
+                 wait_result = -1;
++                break;
++            }
+ 
+             /* Test whether the RDP server is closing the connection */
+ #ifdef HAVE_DISCONNECT_CONTEXT

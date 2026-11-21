@@ -54,6 +54,55 @@ jobs:
           type=semver,pattern={{major}}.{{minor}}
           type=sha
 
+    - name: Extract metadata for patched guacd
+      id: guacd_meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-guacd
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha
+
+    - name: Build patched guacd image for testing
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        load: true
+        tags: webrdp-guacd:ci
+        file: ./Dockerfile.guacd
+
+    - name: Test guacd transport failure
+      run: |
+        docker run -d --rm --name webrdp-guacd-ci --network host webrdp-guacd:ci
+        trap 'docker stop webrdp-guacd-ci >/dev/null 2>&1 || true' EXIT
+        for attempt in {1..20}; do
+          if docker exec webrdp-guacd-ci nc -z 127.0.0.1 4822; then break; fi
+          sleep 1
+        done
+        NODE_PATH="$GITHUB_WORKSPACE/packages/backend/node_modules" node guacd/smoke-test.js
+        for attempt in {1..25}; do
+          if docker logs webrdp-guacd-ci 2>&1 | grep -q ' removed\.'; then exit 0; fi
+          sleep 1
+        done
+        docker logs webrdp-guacd-ci
+        echo 'guacd did not clean up the failed session' >&2
+        exit 1
+
+    - name: Push patched guacd image
+      if: github.event_name != 'pull_request'
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.guacd_meta.outputs.tags }}
+        labels: ${{ steps.guacd_meta.outputs.labels }}
+        file: ./Dockerfile.guacd
+
+    # Publish the application only after its companion guacd image passed
+    # the smoke test and was successfully pushed.
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
       with:

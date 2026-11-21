@@ -6,12 +6,16 @@ class SessionAnchor {
   constructor(options, settings, onClose) {
     this.onClose = onClose;
     this.closed = false;
+    this.hasReceivedSync = false;
     this.client = new GuacdClient(options, 'rdp', { ...settings, audio: [], video: null }, { log() {} });
     // guacamole-lite's fixed 10-second receive timeout is unsuitable for an idle desktop.
     clearInterval(this.client.activityCheckInterval);
     this.parser = new GuacamoleParser();
     this.parser.oninstruction = (opcode, args) => {
-      if (opcode === 'sync') this.client.sendInstruction(['sync', args[0]]);
+      if (opcode === 'sync') {
+        this.hasReceivedSync = true;
+        this.client.sendInstruction(['sync', args[0]]);
+      }
       // An error/disconnect instruction is terminal even if guacd leaves the
       // TCP connection open while waiting for the client to disconnect.
       else if (opcode === 'error' || opcode === 'disconnect') this.client.close();

@@ -388,3 +388,87 @@ test('same credential entry joins one session and temporary control returns to p
   assert.equal(deleteResponse.status, 204);
   await waitFor(() => guacdSockets[4].destroyed);
 });
+
+test('rebuilds a previously working session after two silent joins time out', async (t) => {
+  const sharedId = '$fake-stalled-session';
+  const sockets = [];
+  const selections = [];
+  const fakeGuacd = net.createServer((socket) => {
+    const index = sockets.push(socket) - 1;
+    let transcript = '';
+    let argsSent = false;
+    let readySent = false;
+    socket.on('data', (chunk) => {
+      transcript += chunk.toString('utf8');
+      if (!argsSent && transcript.includes('6.select')) {
+        selections.push(transcript.includes(sharedId) ? 'join' : 'rdp');
+        socket.write(instruction(['args', 'VERSION_1_1_0', 'hostname', 'port', 'username',
+          'password', 'width', 'height', 'dpi', 'read-only']));
+        argsSent = true;
+      }
+      if (!readySent && transcript.includes('7.connect')) {
+        readySent = true;
+        socket.write(instruction(['ready', index === 0 ? sharedId : `$fake-${index}`]));
+        // The anchor and original browser worked; later joins receive no frame.
+        if (index < 2) socket.write(instruction(['sync', '1234']));
+      }
+    });
+    socket.on('error', () => {});
+  });
+  const guacdPort = await listen(fakeGuacd);
+  const appPort = await freePort();
+  const child = spawn(process.execPath, ['src/server.js'], {
+    cwd: path.resolve(__dirname, '..'),
+    env: {
+      ...process.env,
+      PORT: String(appPort),
+      GUACD_HOST: '127.0.0.1',
+      GUACD_PORT: String(guacdPort),
+      GUACD_BROWSER_IDLE_TIMEOUT_MS: '10000',
+      TOKEN_ENCRYPTION_KEY: crypto.randomBytes(32).toString('base64'),
+      GUACAMOLE_LOG_LEVEL: 'QUIET',
+    },
+    stdio: ['ignore', 'ignore', 'ignore'],
+  });
+  const browsers = [];
+  t.after(async () => {
+    for (const browser of browsers) browser.close();
+    child.kill();
+    for (const socket of sockets) socket.destroy();
+    await new Promise((resolve) => fakeGuacd.close(resolve));
+  });
+
+  const api = `http://127.0.0.1:${appPort}`;
+  await waitFor(async () => (await fetch(`${api}/api/health`)).ok);
+  const body = { host: '192.0.2.10', user: 'test', password: 'test', width: 800, height: 600 };
+  const create = () => fetch(`${api}/api/sessions`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const primary = await (await create()).json();
+  browsers.push(await openWebSocket(`ws://127.0.0.1:${appPort}/?token=${encodeURIComponent(primary.token)}`));
+  await waitFor(() => sockets.length >= 2);
+  await waitFor(async () => {
+    const response = await fetch(`${api}/api/sessions/${primary.roomId}`, { headers: identityHeaders(primary) });
+    return (await response.json()).hasControl;
+  });
+  for (let i = 0; i < 2; i += 1) {
+    const viewer = await (await create()).json();
+    browsers.push(await openWebSocket(`ws://127.0.0.1:${appPort}/?token=${encodeURIComponent(viewer.token)}`));
+  }
+  await waitFor(async () => {
+    const response = await fetch(`${api}/api/sessions/${primary.roomId}`, { headers: identityHeaders(primary) });
+    return (await response.json()).viewerCount === 2;
+  });
+  await waitFor(async () => {
+    const response = await fetch(`${api}/api/sessions/${primary.roomId}`, { headers: identityHeaders(primary) });
+    return (await response.json()).state === 'reconnecting';
+  }, 16_000);
+  assert.equal(sockets[0].destroyed, true);
+  const resumed = await fetch(`${api}/api/sessions/${primary.roomId}/resume`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-owner-secret': primary.ownerSecret },
+    body: '{}',
+  });
+  assert.equal(resumed.status, 200);
+  assert.equal(selections.filter((selection) => selection === 'rdp').length, 2);
+});

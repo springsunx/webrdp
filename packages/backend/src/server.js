@@ -9,6 +9,7 @@ const ClientConnection = require('guacamole-lite/lib/ClientConnection');
 
 const SessionManager = require('./session-manager');
 const SessionAnchor = require('./session-anchor');
+const { recordStalledJoin } = require('./stalled-session');
 
 const PORT = parseInteger(process.env.PORT, 3000, 1, 65535);
 const GUACD_HOST = process.env.GUACD_HOST || 'localhost';
@@ -102,6 +103,12 @@ ClientConnection.prototype.connect = function connectWithIdleGrace(options) {
   client.prependListener('close', () => { this.closeDiagnostics.source ||= 'guacd'; });
   const handleInstruction = client.parser.oninstruction;
   client.parser.oninstruction = (opcode, args) => {
+    if (opcode === 'ready') this.guacdReadyAt = Date.now();
+    else if (this.guacdReadyAt && !['nop', 'log'].includes(opcode)) {
+      this.guacdInitialResponse = true;
+      const session = sessions.get(getConnectionMetadata(this).sessionId);
+      if (session) session.stalledJoinEvidence = null;
+    }
     if (opcode === 'error' && /^\d+$/.test(args[1] || '')) {
       this.closeDiagnostics.guacamoleStatus = Number(args[1]);
     }
@@ -112,6 +119,9 @@ ClientConnection.prototype.connect = function connectWithIdleGrace(options) {
     const timeout = client.state === client.STATE_OPEN
       ? GUACD_BROWSER_IDLE_TIMEOUT_MS : 10_000;
     if (Date.now() > client.lastActivity + timeout) {
+      if (client.state === client.STATE_OPEN && this.guacdReadyAt && !this.guacdInitialResponse) {
+        recoverStalledJoin(this, Date.now());
+      }
       client.close(new Error('guacd was inactive for too long'));
     }
   }, 1000);
@@ -460,6 +470,23 @@ function createParticipantResponse(roomId, displaySettings) {
 function closeSessionConnections(roomId) {
   for (const connection of guacServer.activeConnections.values()) {
     if (getConnectionMetadata(connection).sessionId === roomId) connection.close();
+  }
+}
+
+function recoverStalledJoin(connection, now) {
+  const { sessionId } = getConnectionMetadata(connection);
+  const session = sessions.get(sessionId);
+  if (!session?.anchor) return;
+  const hasRecentPeerActivity = [...guacServer.activeConnections.values()].some((peer) => (
+    peer !== connection
+      && getConnectionMetadata(peer).sessionId === sessionId
+      && peer.guacdClient
+      && peer.guacdClient.state === peer.guacdClient.STATE_OPEN
+      && now - peer.guacdClient.lastActivity < GUACD_BROWSER_IDLE_TIMEOUT_MS
+  ));
+  if (recordStalledJoin(session, connection.connectionId, now, GUACD_BROWSER_IDLE_TIMEOUT_MS, hasRecentPeerActivity)) {
+    console.warn('[WebRDP] 新加入的客户端多次收不到初始画面，正在重建失效共享会话');
+    session.anchor.close();
   }
 }
 

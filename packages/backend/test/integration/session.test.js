@@ -224,9 +224,13 @@ test('tickets are single use and expire', () => withHarness({ ticketTtlMs: 5000 
   assert.equal(f.retry, true);
 }));
 
-test('legacy GET /api/rdp/connect + ws ?token= still work', () => withHarness({}, async (h) => {
+test('legacy GET /api/rdp/connect + ws ?token= (including trailing ?) still work', () => withHarness({}, async (h) => {
+  const qs = new URLSearchParams(h.target).toString();
+  const res = await fetch(`${h.base}/api/rdp/connect?${qs}`);
+  const { token } = await res.json();
   const a = h.client('A');
-  await a.connect({}, { legacy: true });
+  // Guacamole.WebSocketTunnel appends "?" + data when tunnelURL already has query params
+  await a.open(`/?token=${encodeURIComponent(token)}?`);
   await a.waitFrame();
   const s = await a.waitState((st) => st.phase === 'connected');
   assert.equal(s.you.role, 'primary');

@@ -129,7 +129,8 @@ function attachWebSocket({ server, manager, log }) {
   server.on('upgrade', (req, socket, head) => {
     let url;
     try { url = new URL(req.url, 'http://x'); } catch { socket.destroy(); return; }
-    const ticket = url.searchParams.get('ticket') || url.searchParams.get('token');
+    let ticket = url.searchParams.get('ticket') || url.searchParams.get('token');
+    if (ticket) ticket = ticket.replace(/\?+$/, '');
     if (!ticket) {
       socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
       socket.destroy();

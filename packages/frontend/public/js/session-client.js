@@ -54,9 +54,9 @@ function detectCaps() {
   return { audio: [], image };
 }
 
-function tunnelWsUrl(ticket) {
+function tunnelBaseUrl() {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${window.location.host}/tunnel?ticket=${encodeURIComponent(ticket)}`;
+  return `${proto}//${window.location.host}/tunnel`;
 }
 
 export class SessionClient extends EventTarget {
@@ -263,7 +263,7 @@ export class SessionClient extends EventTarget {
       return;
     }
 
-    const tunnel = new Guacamole.WebSocketTunnel(tunnelWsUrl(ticketResp.ticket));
+    const tunnel = new Guacamole.WebSocketTunnel(tunnelBaseUrl());
     tunnel.receiveTimeout = 20000;
     tunnel.unstableThreshold = 3000;
     this.tunnel = tunnel;
@@ -341,7 +341,7 @@ export class SessionClient extends EventTarget {
     display.showCursor(true);
     this._emit('display', { display });
 
-    client.connect('');
+    client.connect(`ticket=${encodeURIComponent(ticketResp.ticket)}`);
   }
 
   _onControlInstruction(rawJson) {

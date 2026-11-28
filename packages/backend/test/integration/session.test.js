@@ -335,11 +335,19 @@ test('anchor keeps guacd alive with sync replies', () => withHarness({}, async (
   await waitFor(() => receivedByOwner(h.fake, 'sync').length >= 2, { message: 'anchor sync replies' });
 }));
 
-test('health endpoint', () => withHarness({}, async (h) => {
+test('health endpoint and guacamole browser script', () => withHarness({}, async (h) => {
   const r = await fetch(`${h.base}/healthz?deep=1`);
   const j = await r.json();
   assert.equal(r.status, 200);
   assert.equal(j.guacd, true);
   const idx = await fetch(`${h.base}/?host=a&user=b&password=c`);
   assert.equal(idx.headers.get('referrer-policy'), 'no-referrer');
+
+  const jsRes = await fetch(`${h.base}/guacamole-common-js/dist/guacamole-common.min.js`);
+  assert.equal(jsRes.status, 200);
+  assert.match(jsRes.headers.get('content-type') || '', /javascript/);
+  const jsBody = await jsRes.text();
+  assert.ok(jsBody.startsWith('var Guacamole'));
+  assert.ok(!jsBody.includes('module.exports'));
+  assert.ok(jsBody.includes('window.Guacamole=Guacamole'));
 }));

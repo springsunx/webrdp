@@ -19,11 +19,17 @@ function resolvePublicDir(config) {
   return candidates.find((p) => fs.existsSync(path.join(p, 'index.html'))) || candidates[candidates.length - 1];
 }
 
-function resolveGuacamoleJs() {
+function loadGuacamoleBrowserScript() {
   try {
-    const pkg = path.dirname(require.resolve('guacamole-common-js/package.json'));
-    const file = path.join(pkg, 'dist/cjs/guacamole-common.min.js');
-    if (fs.existsSync(file)) return file;
+    // Package uses "exports" without "./package.json", so resolve the main entry directly.
+    const entry = require.resolve('guacamole-common-js');
+    const dir = path.dirname(entry);
+    const min = path.join(dir, 'guacamole-common.min.js');
+    const file = fs.existsSync(min) ? min : entry;
+    let src = fs.readFileSync(file, 'utf8');
+    // Strip trailing CJS export so browsers don't throw `ReferenceError: module is not defined`.
+    src = src.replace(/[,;]\s*module\.exports\s*=\s*Guacamole\s*;?\s*$/, ';window.Guacamole=Guacamole;\n');
+    return src;
   } catch { /* not installed */ }
   return null;
 }
@@ -85,11 +91,12 @@ function createApp({ config, log, manager }) {
     res.status(body.ok ? 200 : 503).json(body);
   });
 
-  const guacJs = resolveGuacamoleJs();
-  if (guacJs) {
+  const guacScript = loadGuacamoleBrowserScript();
+  if (guacScript) {
     app.get('/guacamole-common-js/dist/guacamole-common.min.js', (req, res) => {
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
       res.setHeader('Cache-Control', 'public, max-age=86400');
-      res.sendFile(guacJs);
+      res.send(guacScript);
     });
   } else {
     log.warn('guacamole-common-js not found in node_modules; expecting it in the public dir');

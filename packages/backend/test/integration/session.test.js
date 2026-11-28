@@ -339,6 +339,27 @@ test('anchor keeps guacd alive with sync replies', () => withHarness({}, async (
   await waitFor(() => receivedByOwner(h.fake, 'sync').length >= 2, { message: 'anchor sync replies' });
 }));
 
+test('wedged guacd joiner timeout resets anchor so clients auto-recover into a fresh session', () => withHarness({ connectTimeoutMs: 300 }, async (h) => {
+  const a = h.client('A'); await a.connect(); await a.waitFrame();
+  const idA = a.identity;
+  const oldConn = h.conn();
+  oldConn.wedged = true; // simulate guacd stuck after "User is not responding."
+
+  const b = h.client('B'); await b.connect();
+  // Joiner B times out before ready -> gateway resets the wedged anchor and kicks both with retryable error.
+  const fb = await b.waitCtl((m) => m.t === 'fatal');
+  assert.equal(fb.retry, true);
+  await waitFor(() => a.closed && b.closed, { message: 'clients closed for recovery' });
+  await waitFor(() => oldConn.closed, { message: 'wedged guacd connection terminated' });
+
+  // Reconnecting creates a brand new healthy guacd connection and restores A as primary.
+  const a2 = h.client('A'); await a2.connect({}, { identity: idA });
+  await a2.waitFrame();
+  assert.notEqual(h.conn().id, oldConn.id);
+  const sa = await a2.waitState((s) => s.phase === 'connected' && s.you.controller);
+  assert.equal(sa.you.role, 'primary');
+}));
+
 test('health endpoint and guacamole browser script', () => withHarness({}, async (h) => {
   const r = await fetch(`${h.base}/healthz?deep=1`);
   const j = await r.json();

@@ -87,6 +87,7 @@ class Attachment {
     this.paused = false;
     this.overLimitSince = 0;
     this.drainTimer = null;
+    this.nopTimer = null;
   }
 
   sendRaw(text) {
@@ -129,6 +130,8 @@ class Attachment {
   dispose() {
     this.closed = true;
     if (this.drainTimer) clearInterval(this.drainTimer);
+    if (this.nopTimer) clearInterval(this.nopTimer);
+    this.nopTimer = null;
     if (this.guac) this.guac.close('participant left');
     this.guac = null;
   }
@@ -472,10 +475,11 @@ class Session extends EventEmitter {
     const t = this.target;
     const audio = Array.isArray(att.caps.audio) ? att.caps.audio : [];
     const image = Array.isArray(att.caps.image) && att.caps.image.length ? att.caps.image : ['image/png', 'image/jpeg'];
+    const joinTimeoutMs = Math.min(8000, this.config.connectTimeoutMs);
     const guac = new GuacdConnection({
       host: this.config.guacdHost,
       port: this.config.guacdPort,
-      timeoutMs: this.config.connectTimeoutMs,
+      timeoutMs: joinTimeoutMs,
       select: this.connectionId,
       size: [this.display.width, this.display.height, t.dpi],
       audio,
@@ -491,6 +495,15 @@ class Session extends EventEmitter {
       },
     });
     att.guac = guac;
+    let joined = false;
+    guac.on('ready', () => {
+      joined = true;
+      // Keep guacd's per-user timer alive for backgrounded browser tabs whose
+      // JS timers are throttled, while WS ping/pong (5s) still evicts dead sockets.
+      att.nopTimer = setInterval(() => {
+        if (!att.closed && att.ws.readyState === 1) guac.write(encode('nop'));
+      }, ANCHOR_NOP_MS);
+    });
     guac.on('instructions', (list) => {
       if (att.closed) return;
       let out = '';
@@ -498,9 +511,21 @@ class Session extends EventEmitter {
       att.sendRaw(out);
     });
     guac.on('close', (info) => {
+      clearInterval(att.nopTimer);
+      att.nopTimer = null;
       if (att.guac !== guac || att.closed) return;
       att.guac = null;
       if (this.phase === 'connected') {
+        if (!joined) {
+          // A healthy local guacd completes join in milliseconds; a pre-ready
+          // timeout means the guacd child process is wedged (e.g. after "User is
+          // not responding."). Reset the anchor so clients recover cleanly.
+          this.log.warn('joiner handshake failed, resetting wedged session', {
+            session: this.shortId, client: att.id, message: info.message,
+          });
+          this._anchorFailed(info.code || Status.UPSTREAM_TIMEOUT, '远程会话通道异常，正在重建连接');
+          return;
+        }
         this.log.warn('joiner connection lost', { session: this.shortId, client: att.id, message: info.message });
         this._closeAttachment(att, info.code || Status.UPSTREAM_ERROR, '与远程会话的连接中断');
       }

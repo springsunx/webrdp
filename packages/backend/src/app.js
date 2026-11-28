@@ -8,7 +8,9 @@ const express = require('express');
 const { WebSocketServer } = require('ws');
 const { SessionManager } = require('./session/manager');
 
-const WS_HEARTBEAT_MS = 20000;
+// Must be well below guacd's 15s user-response timeout so dead browsers are
+// cleanly detached before guacd hits "User is not responding."
+const WS_HEARTBEAT_MS = 5000;
 
 function resolvePublicDir(config) {
   const candidates = [

@@ -169,6 +169,7 @@ class FakeUser {
     } else {
       const c = this.server.connections.get(this.select);
       if (!c) { this.send(encode('error', 'No such connection.', 0x0204)); this.socket.end(); return; }
+      if (c.wedged) return; // simulate guacd joiner deadlock (never sends ready)
       this.attach(c);
       this.send(encode('ready', c.id));
       this.send(c.initialFrame());

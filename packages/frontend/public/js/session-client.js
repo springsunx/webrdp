@@ -363,11 +363,9 @@ export class SessionClient extends EventTarget {
         if (msg.connectedAt) {
           this.connectedAt = msg.connectedAt;
         }
-        if (msg.phase === 'connected' && this.status !== 'connected') {
-          this._reconnectAttempt = 0;
-          this.frozenDurationMs = null;
-          this._setStatus('connected', '已连接');
-        }
+        // Do not mark the browser as 'connected' until Guacamole.Client actually
+        // receives its first sync frame (client.onstatechange === 3); otherwise a
+        // wedged guacd joiner would show a green dot over a black screen.
         this._emit('state', msg);
         break;
       case 'events':

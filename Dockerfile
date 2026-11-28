@@ -1,29 +1,21 @@
-FROM node:18-alpine
+FROM node:20-alpine
 
-# 设置工作目录
 WORKDIR /app
 
-# 复制后端代码
+# 安装后端生产依赖（包含 guacamole-common-js，由后端直接提供静态路由）
 COPY packages/backend/package*.json ./
+RUN npm ci --omit=dev
 
-# 安装后端依赖
-RUN npm ci --only=production
-
-# 复制后端源代码
+# 复制后端与前端静态文件
 COPY packages/backend/src ./src
-
-# 复制前端文件
 COPY packages/frontend/public ./public
 
-# 安装 guacamole-common-js 库（前端需要）
-RUN mkdir -p ./public/guacamole-common-js/dist && \
-    npm pack guacamole-common-js@1.5.0 && \
-    tar -xzf guacamole-common-js-1.5.0.tgz && \
-    cp package/dist/cjs/guacamole-common.min.js ./public/guacamole-common-js/dist/ && \
-    rm -rf package guacamole-common-js-1.5.0.tgz
+ENV NODE_ENV=production
+ENV PORT=3000
 
-# 暴露端口
 EXPOSE 3000
 
-# 启动应用
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+
 CMD ["node", "src/server.js"]

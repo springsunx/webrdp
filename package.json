@@ -1,14 +1,16 @@
 {
-  "name": "web-rdp-lite",
-  "version": "1.0.0",
-  "description": "Lightweight Web RDP client based on Nexus Terminal",
+  "name": "webrdp",
+  "version": "2.0.0",
+  "description": "Multi-user WebRDP client based on Apache Guacamole (guacd)",
   "scripts": {
-    "start": "./start.sh",
-    "docker:up": "docker-compose up -d",
-    "docker:down": "docker-compose down",
-    "docker:logs": "docker-compose logs -f"
+    "start": "npm --prefix packages/backend start",
+    "dev": "npm --prefix packages/backend run dev",
+    "dev:fake": "npm --prefix packages/backend run dev:fake",
+    "test": "npm --prefix packages/backend test",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
   },
-  "keywords": ["rdp", "remote-desktop", "web-client", "guacamole"],
-  "author": "",
+  "keywords": ["rdp", "remote-desktop", "web-client", "guacamole", "multi-user"],
   "license": "MIT"
 }

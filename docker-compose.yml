@@ -11,7 +11,7 @@ services:
     networks:
       - webrdp-network
 
-  # WebRDP - 合并后的前端+后端服务
+  # WebRDP - 合并后的前端+后端+WebSocket服务（兼容 springsunx/webrdp 部署方式）
   app:
     build:
       context: .
@@ -19,11 +19,17 @@ services:
     container_name: webrdp-app
     restart: unless-stopped
     ports:
-      - "3000:3000"    # HTTP + 静态文件 + WebSocket
+      - "${PORT:-3000}:3000"    # HTTP + 静态文件 + REST API + WebSocket
     environment:
-      - GUACD_HOST=guacd
-      - GUACD_PORT=4822
+      - GUACD_HOST=${GUACD_HOST:-guacd}
+      - GUACD_PORT=${GUACD_PORT:-4822}
       - PORT=3000
+      - PRIMARY_GRACE_SECONDS=${PRIMARY_GRACE_SECONDS:-180}
+      - SESSION_IDLE_SECONDS=${SESSION_IDLE_SECONDS:-120}
+      - CONNECT_TIMEOUT_SECONDS=${CONNECT_TIMEOUT_SECONDS:-30}
+      - MAX_SESSIONS=${MAX_SESSIONS:-50}
+      - MAX_PARTICIPANTS=${MAX_PARTICIPANTS:-20}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
     depends_on:
       - guacd
     networks:

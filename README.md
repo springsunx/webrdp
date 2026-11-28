@@ -1,176 +1,49 @@
-# WebRDP
+# WebRDP (v2.0 多人协作重写版)
 
-基于 [Nexus Terminal](https://github.com/Heavrnl/nexus-terminal) 的轻量级 Web RDP 客户端，专注于 RDP 协议，支持 URL 参数快速连接。
+基于 Apache Guacamole (`guacd`) 的轻量级 Web RDP 客户端，完整保留 [springsunx/webrdp](https://github.com/springsunx/webrdp) 的单端口 Docker 部署方式与 URL 参数直连习惯，并重构了服务端会话管理、多人共享控制权、异常恢复与移动端交互体验。
 
-[![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white)](https://www.docker.com/)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-Workflow-success)](.github/workflows/docker-build.yml)
+## ✨ 核心特性
 
-## ✨ 功能特点
+- **原样保留连接体验**：支持登录表单与 URL Query / Fragment 参数直连（`host`、`port`、`user`、`password`、`width`、`height`、`title`、`auto` 等），保留 URL 密码兼容以支持刷新与书签恢复，并通过 `Referrer-Policy: no-referrer` 与一次性票据防止凭据外泄。
+- **服务端权威的多人共享与单操作者控制**：
+  - 相同目标与凭据自动进入同一共享会话（由网关持有 guacd 锚点连接，浏览器刷新不中断 Windows 会话）。
+  - 首位进入者为**主用户**并默认拥有控制权；后续用户默认观看。
+  - 观看者可一键**接管**；临时操作者可**归还**；主用户随时可**抢回**。
+  - 临时操作者主动退出或断线时，控制权自动回归主用户并释放其按住的键鼠状态。
+  - 主用户断线后保留主控身份（默认 `PRIMARY_GRACE_SECONDS=180` 秒），期间无人控制且观看者可接管；主用户在保留期内重连自动恢复主控身份与抢回权限；超时未回则自动晋升最早在线观看者。
+  - 服务端在协议层严格拦截非操作者的键鼠/剪贴板/分辨率指令。
+- **移动端与平板深度优化**：
+  - 紧凑单行顶栏（适配刘海与 `safe-area-inset`），接管/抢回不膨胀为多行横幅。
+  - 统一手势引擎：支持**触控板**与**直接触控**两种模式随时切换；覆盖点击、拖拽、长按/双指轻点右键、双指滚动/拖动画布、捏合缩放、三指轻点呼出/关闭软键盘（支持中文 IME 与快捷扩展键栏）。
+  - 基于服务端 `connectedAt` 与时钟偏移校准的真实会话时长显示，刷新后连续计时，断开后冻结，不伪造在线时长。
+  - 指数退避自动重连与非阻塞状态提示，不遮挡主要远程画面。
 
-- 🚀 **轻量级**：移除了 SSH、VNC、SFTP 等不需要的功能
-- 🔗 **URL 参数支持**：通过 URL 直接连接，便于集成
-- 🐳 **Docker 部署**：前后端合并，一键部署，开箱即用
-- 🖥️ **输入界面**：美观的连接界面，支持记住密码
-- 📱 **响应式设计**：支持手机、平板、桌面多种设备
-- 🖱️ **鼠标操作**：支持左键、右键、滚轮
-
-## 🚀 快速开始
-
-### Docker 部署（推荐）
-
-```bash
-# 克隆项目
-git clone https://github.com/springsunx/webrdp.git
-cd webrdp
-
-# 启动服务
-docker compose up -d
-
-# 访问应用
-http://localhost:3000
-```
-
-### URL 参数访问
-
-```
-http://localhost:3000?host=YOUR_RDP_HOST&port=3389&user=YOUR_USER&password=YOUR_PASSWORD
-```
-
-## 📖 使用说明
-
-### 1. 输入界面访问
-
-访问 `http://localhost:3000`，会显示美观的输入界面：
-
-- 输入主机地址、用户名、密码
-- 勾选"记住连接信息"（可选）
-- 点击"连接"按钮
-
-### 2. URL 参数访问
-
-通过 URL 参数直接连接：
-
-```
-http://localhost:3000?host=192.168.1.100&port=3389&user=admin&password=secret&width=1920&height=1080&title=我的电脑
-```
-
-### 3. URL 参数说明
-
-| 参数 | 必填 | 默认值 | 描述 |
-|------|------|--------|------|
-| `host` | ✅ | - | RDP服务器IP或域名 |
-| `port` | ❌ | 3389 | RDP端口 |
-| `user` | ✅ | - | 用户名 |
-| `password` | ✅ | - | 密码 |
-| `width` | ❌ | 自动计算 | 屏幕宽度 |
-| `height` | ❌ | 自动计算 | 屏幕高度 |
-| `title` | ❌ | WebRDP | 页面标题 |
-| `auto` | ❌ | false | 自动计算分辨率 |
-
-## 🏗️ 架构
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    应用容器 (端口 3000)                   │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐      │
-│  │  静态文件   │  │  REST API   │  │  WebSocket  │      │
-│  │  (前端)     │  │  (后端)     │  │  (Guacamole)│      │
-│  └─────────────┘  └─────────────┘  └─────────────┘      │
-└─────────────────────────────────────────────────────────┘
-                           │
-                           │ WebSocket
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│                    Guacd 容器 (端口 4822)                │
-└─────────────────────────────────────────────────────────┘
-```
-
-## 🐳 Docker 配置
-
-### 端口说明
-
-| 服务 | 端口 | 说明 |
-|------|------|------|
-| 应用（前端+后端+WebSocket） | 3000 | Web 界面 + REST API + WebSocket |
-| Guacd | 4822 | RDP 协议代理 |
-
-**注意**：HTTP、REST API 和 WebSocket 都使用同一个端口（3000），方便反向代理配置。
-
-### 环境变量
-
-```yaml
-# docker-compose.yml
-environment:
-  - GUACD_HOST=guacd
-  - GUACD_PORT=4822
-  - PORT=3000
-```
-
-## 🛠️ 开发
-
-### 本地开发
+## 🚀 快速部署（兼容 springsunx/webrdp）
 
 ```bash
-# 安装依赖
-cd packages/backend && npm install
-
-# 启动 Guacd
-docker run -d --name guacd -p 4822:4822 guacamole/guacd:latest
-
-# 启动后端
-cd packages/backend && npm run dev
-
-# 访问应用
-http://localhost:3000
+docker compose up -d --build
 ```
 
-### 项目结构
+访问应用：
+- 表单入口：`http://localhost:3000`
+- URL 参数直连：`http://localhost:3000/?host=YOUR_RDP_HOST&port=3389&user=YOUR_USER&password=YOUR_PASSWORD&width=1280&height=720&title=办公电脑`
+- Fragment 参数直连：`http://localhost:3000/#host=YOUR_RDP_HOST&port=3389&user=YOUR_USER&password=YOUR_PASSWORD`
 
+更多部署、反向代理与环境变量说明请见 [DEPLOYMENT.md](DEPLOYMENT.md)。
+
+## 🛠️ 本地开发与测试
+
+```bash
+cd packages/backend
+npm install
+
+# 运行全部单元测试与集成测试（内置 fake-guacd，无需真实 Windows）
+npm test
+
+# 启动本地演示环境（内置 fake-guacd + 网关）
+npm run dev:fake
 ```
-webrdp/
-├── packages/
-│   ├── backend/          # 后端服务
-│   │   └── src/
-│   │       └── server.js
-│   └── frontend/         # 前端界面
-│       └── public/
-│           ├── index.html
-│           ├── app.js
-│           └── guacamole-common-js/
-├── docker-compose.yml
-├── Dockerfile
-└── .github/workflows/    # GitHub Actions
-```
-
-## 📚 文档
-
-- [输入界面使用说明](INPUT_FORM.md)
-- [部署指南](DEPLOYMENT.md)
-
-## 🔧 故障排除
-
-### 连接失败
-
-1. 检查 RDP 服务器是否启用远程桌面
-2. 验证用户名和密码
-3. 检查网络连接
-
-### 黑屏问题
-
-1. 调整分辨率参数
-2. 检查目标主机的显示设置
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request！
 
 ## 📄 许可证
 
 [MIT License](LICENSE)
-
-## 🙏 致谢
-
-- [Nexus Terminal](https://github.com/Heavrnl/nexus-terminal) - 原始项目
-- [Apache Guacamole](https://guacamole.apache.org/) - RDP 协议支持
-- [Guacamole Lite](https://github.com/nicknisi/guacamole-lite) - 轻量级 Guacamole 客户端

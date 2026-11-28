@@ -1,666 +1,201 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="theme-color" content="#1a1a1a">
-    <title id="page-title">WebRDP</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background-color: #1a1a1a;
-            color: #fff;
-            height: 100vh;
-            height: 100dvh;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-        
-        /* 连接界面样式 */
-        .login-container {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            height: 100dvh;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            padding: 20px;
-        }
-        
-        .login-box {
-            background-color: #2d2d2d;
-            padding: 30px;
-            border-radius: 15px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
-            width: 100%;
-            max-width: 400px;
-            max-height: 90vh;
-            overflow-y: auto;
-        }
-        
-        .login-box h1 {
-            text-align: center;
-            margin-bottom: 25px;
-            color: #fff;
-            font-size: 22px;
-        }
-        
-        .login-box h1 i {
-            color: #3b82f6;
-            margin-right: 10px;
-        }
-        
-        .form-group {
-            margin-bottom: 16px;
-        }
-        
-        .form-group label {
-            display: block;
-            margin-bottom: 6px;
-            color: #aaa;
-            font-size: 14px;
-        }
-        
-        .form-group label span {
-            color: #ef4444;
-        }
-        
-        .form-group input {
-            width: 100%;
-            padding: 12px 15px;
-            border: 1px solid #404040;
-            border-radius: 8px;
-            background-color: #1f1f1f;
-            color: #fff;
-            font-size: 16px;
-            transition: border-color 0.3s, box-shadow 0.3s;
-            -webkit-appearance: none;
-        }
-        
-        .form-group input:focus {
-            outline: none;
-            border-color: #3b82f6;
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
-        }
-        
-        .form-group input::placeholder {
-            color: #666;
-        }
-        
-        .form-row {
-            display: flex;
-            gap: 15px;
-        }
-        
-        .form-row .form-group {
-            flex: 1;
-        }
-        
-        .connect-btn {
-            width: 100%;
-            padding: 14px;
-            background-color: #3b82f6;
-            color: #fff;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background-color 0.3s, transform 0.2s;
-            margin-top: 10px;
-            -webkit-tap-highlight-color: transparent;
-        }
-        
-        .connect-btn:hover {
-            background-color: #2563eb;
-            transform: translateY(-2px);
-        }
-        
-        .connect-btn:active {
-            transform: translateY(0);
-        }
-        
-        .connect-btn:disabled {
-            background-color: #4b5563;
-            cursor: not-allowed;
-            transform: none;
-        }
-        
-        .error-message {
-            background-color: #7f1d1d;
-            color: #fca5a5;
-            padding: 12px;
-            border-radius: 8px;
-            margin-bottom: 16px;
-            display: none;
-            font-size: 14px;
-        }
-        
-        .remember-me {
-            display: flex;
-            align-items: center;
-            margin-bottom: 16px;
-        }
-        
-        .remember-me input {
-            margin-right: 10px;
-            width: 18px;
-            height: 18px;
-        }
-        
-        /* 远程桌面界面样式 */
-        .desktop-container {
-            display: none;
-            flex-direction: column;
-            height: 100vh;
-            height: 100dvh;
-        }
-        
-        .header {
-            background-color: #2d2d2d;
-            padding: 8px 12px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid #404040;
-            flex-shrink: 0;
-        }
-        
-        .header h1 {
-            font-size: 14px;
-            font-weight: 500;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            max-width: 40%;
-        }
-        
-        .status {
-            padding: 3px 8px;
-            border-radius: 10px;
-            font-size: 10px;
-            font-weight: 500;
-            white-space: nowrap;
-        }
-        
-        .status.connecting {
-            background-color: #f59e0b;
-            color: #000;
-        }
-        
-        .status.connected {
-            background-color: #10b981;
-            color: #fff;
-        }
-        
-        .status.error {
-            background-color: #ef4444;
-            color: #fff;
-        }
-        
-        .status.disconnected {
-            background-color: #6b7280;
-            color: #fff;
-        }
-        
-        .controls {
-            display: flex;
-            gap: 6px;
-            align-items: center;
-        }
-        
-        .controls button {
-            background-color: #3b82f6;
-            color: white;
-            border: none;
-            padding: 6px 10px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 11px;
-            -webkit-tap-highlight-color: transparent;
-        }
-        
-        .controls button:hover {
-            background-color: #2563eb;
-        }
-        
-        .controls button:disabled {
-            background-color: #4b5563;
-            cursor: not-allowed;
-        }
-        
-        .rdp-container {
-            flex: 1;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 8px;
-            background-color: #111;
-            overflow: hidden;
-            position: relative;
-            /* 自定义滚动条样式 */
-            scrollbar-width: thin;
-            scrollbar-color: #555 #222;
-        }
-        
-        .rdp-container::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-        
-        .rdp-container::-webkit-scrollbar-track {
-            background: #222;
-            border-radius: 4px;
-        }
-        
-        .rdp-container::-webkit-scrollbar-thumb {
-            background: #555;
-            border-radius: 4px;
-        }
-        
-        .rdp-container::-webkit-scrollbar-thumb:hover {
-            background: #777;
-        }
-        
-        #rdp-display {
-            background-color: #000;
-            border: 1px solid #333;
-            position: relative;
-            overflow: hidden;
-            max-width: 100%;
-            max-height: 100%;
-        }
-        
-        /* 手机端：启用滚动查看完整远程桌面 */
-        @media (max-width: 768px) {
-            .rdp-container {
-                justify-content: flex-start;
-                align-items: flex-start;
-                overflow: auto;
-                -webkit-overflow-scrolling: touch;
-                overscroll-behavior: contain;
-                /* 隐藏滚动条 */
-                scrollbar-width: none; /* Firefox */
-                -ms-overflow-style: none; /* IE/Edge */
-            }
-            
-            .rdp-container::-webkit-scrollbar {
-                display: none; /* Chrome/Safari/Opera */
-            }
-            
-            #rdp-display {
-                max-width: none;
-                max-height: none;
-                flex-shrink: 0;
-                margin: 0 auto;
-            }
-            
-            /* 滚动提示条 - 仅在内容可滚动时显示 */
-            .scroll-hint {
-                display: block;
-                position: fixed;
-                bottom: 50px;
-                left: 50%;
-                transform: translateX(-50%);
-                background: rgba(59, 130, 246, 0.85);
-                color: #fff;
-                padding: 6px 14px;
-                border-radius: 20px;
-                font-size: 11px;
-                white-space: nowrap;
-                pointer-events: none;
-                opacity: 0;
-                transition: opacity 0.4s ease;
-                z-index: 100;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-            }
-            
-            .scroll-hint.visible {
-                opacity: 1;
-            }
-            
-            .scroll-hint::before {
-                content: '⬅';
-                margin-right: 6px;
-            }
-            
-            .scroll-hint::after {
-                content: '➡';
-                margin-left: 6px;
-            }
-            
-            /* 触摸操作提示 */
-            .touch-hint {
-                display: block;
-                position: fixed;
-                top: 80px;
-                left: 50%;
-                transform: translateX(-50%);
-                background: rgba(16, 185, 129, 0.9);
-                color: #fff;
-                padding: 8px 16px;
-                border-radius: 20px;
-                font-size: 12px;
-                white-space: nowrap;
-                pointer-events: none;
-                z-index: 100;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-                opacity: 0;
-                transition: opacity 0.5s ease;
-            }
-            
-            .touch-hint.visible {
-                opacity: 1;
-            }
-        }
-        
-        #rdp-display canvas {
-            display: block;
-            z-index: 1 !important;
-        }
-        
-        /* 滚动提示条 - 桌面端隐藏，手机端在媒体查询中激活 */
-        .scroll-hint {
-            display: none;
-        }
-        
-        /* 触摸提示 - 桌面端隐藏 */
-        .touch-hint {
-            display: none;
-        }
-        
-        .footer {
-            background-color: #2d2d2d;
-            padding: 6px 12px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            border-top: 1px solid #404040;
-            font-size: 10px;
-            color: #9ca3af;
-            flex-shrink: 0;
-            flex-wrap: wrap;
-            gap: 8px 16px;
-        }
-        
-        .connection-info {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            justify-content: center;
-        }
-        
-        .resolution-controls {
-            display: flex;
-            gap: 6px;
-            align-items: center;
-            flex-wrap: wrap;
-            justify-content: center;
-        }
-        
-        .resolution-controls input {
-            width: 70px;
-            padding: 3px 6px;
-            border: 1px solid #404040;
-            border-radius: 4px;
-            background-color: #1f1f1f;
-            color: white;
-            font-size: 11px;
-            text-align: center;
-            -moz-appearance: textfield;
-        }
-        
-        .resolution-controls input::-webkit-outer-spin-button,
-        .resolution-controls input::-webkit-inner-spin-button {
-            -webkit-appearance: none;
-            margin: 0;
-        }
-        
-        .loading {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100%;
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: rgba(0,0,0,0.8);
-            z-index: 10;
-        }
-        
-        .spinner {
-            width: 40px;
-            height: 40px;
-            border: 4px solid #333;
-            border-top: 4px solid #3b82f6;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-bottom: 15px;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
-        .loading p {
-            color: #fff;
-            font-size: 14px;
-        }
-        
-        /* 响应式设计 */
-        @media (max-width: 600px) {
-            .login-container {
-                padding: 15px;
-            }
-            
-            .login-box {
-                padding: 20px;
-                border-radius: 12px;
-            }
-            
-            .login-box h1 {
-                font-size: 20px;
-                margin-bottom: 20px;
-            }
-            
-            .form-group {
-                margin-bottom: 14px;
-            }
-            
-            .form-group label {
-                font-size: 13px;
-            }
-            
-            .form-group input {
-                padding: 10px 12px;
-                font-size: 16px;
-            }
-            
-            .form-row {
-                flex-direction: column;
-                gap: 0;
-            }
-            
-            .connect-btn {
-                padding: 12px;
-                font-size: 15px;
-            }
-            
-            .header {
-                padding: 6px 10px;
-            }
-            
-            .header h1 {
-                font-size: 12px;
-                max-width: 35%;
-            }
-            
-            .controls {
-                gap: 4px;
-            }
-            
-            .controls button {
-                padding: 5px 8px;
-                font-size: 10px;
-            }
-            
-            .rdp-container {
-                padding: 4px;
-            }
-            
-            .footer {
-                padding: 4px 8px;
-                justify-content: center;
-                gap: 4px 12px;
-            }
-            
-            .connection-info {
-                gap: 6px;
-                font-size: 9px;
-            }
-            
-            .resolution-controls {
-                gap: 4px;
-            }
-            
-            .resolution-controls input {
-                width: 60px;
-                padding: 2px 4px;
-                font-size: 10px;
-            }
-        }
-        
-        @media (max-width: 380px) {
-            .header h1 {
-                font-size: 11px;
-                max-width: 30%;
-            }
-            
-            .controls button {
-                padding: 4px 6px;
-                font-size: 9px;
-            }
-        }
-        
-        /* 全屏模式隐藏UI */
-        @media (display-mode: fullscreen) {
-            .header, .footer {
-                display: none;
-            }
-            
-            .rdp-container {
-                padding: 0;
-            }
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#181b20">
+  <title>WebRDP</title>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <!-- 连接界面 -->
-    <div class="login-container" id="login-container">
-        <div class="login-box">
-            <h1><i class="fas fa-desktop"></i><span id="login-title">WebRDP</span></h1>
-            
-            <div class="error-message" id="error-message"></div>
-            
-            <form id="login-form">
-                <div class="form-group">
-                    <label>主机地址 <span>*</span></label>
-                    <input type="text" id="host" placeholder="例如: 192.168.1.100 或 example.com" required>
-                </div>
-                
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>端口</label>
-                        <input type="number" id="port" value="3389" placeholder="3389">
-                    </div>
-                    <div class="form-group">
-                        <label>用户名 <span>*</span></label>
-                        <input type="text" id="user" placeholder="例如: administrator" required>
-                    </div>
-                </div>
-                
-                <div class="form-group">
-                    <label>密码 <span>*</span></label>
-                    <input type="password" id="password" placeholder="输入密码" required>
-                </div>
-                
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>屏幕宽度</label>
-                        <input type="number" id="width" value="1024" placeholder="1024">
-                    </div>
-                    <div class="form-group">
-                        <label>屏幕高度</label>
-                        <input type="number" id="height" value="768" placeholder="768">
-                    </div>
-                </div>
-                
-                <div class="remember-me">
-                    <input type="checkbox" id="remember" checked>
-                    <label for="remember" style="margin-bottom: 0;">记住连接信息</label>
-                </div>
-                
-                <button type="submit" class="connect-btn" id="connect-btn">
-                    连接
-                </button>
-            </form>
+  <!-- 登录界面 -->
+  <main class="login-view" id="login-view">
+    <div class="login-card">
+      <h1 class="login-title" id="login-title">WebRDP</h1>
+      <div class="login-error" id="login-error" hidden></div>
+      <form id="login-form" autocomplete="on">
+        <div class="field">
+          <label for="host">主机地址 <span class="req">*</span></label>
+          <input type="text" id="host" name="host" placeholder="例如: 192.168.1.100 或 rdp.example.com" required>
         </div>
+
+        <div class="field-row">
+          <div class="field field-port">
+            <label for="port">端口</label>
+            <input type="number" id="port" name="port" value="3389" min="1" max="65535">
+          </div>
+          <div class="field">
+            <label for="user">用户名 <span class="req">*</span></label>
+            <input type="text" id="user" name="user" placeholder="administrator" required>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="password">密码 <span class="req">*</span></label>
+          <input type="password" id="password" name="password" placeholder="输入密码" required>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label for="width">屏幕宽度</label>
+            <input type="number" id="width" name="width" value="1024" min="640" max="3840">
+          </div>
+          <div class="field">
+            <label for="height">屏幕高度</label>
+            <input type="number" id="height" name="height" value="768" min="480" max="2160">
+          </div>
+        </div>
+
+        <details class="advanced-box">
+          <summary>更多选项（域 / 显示名称）</summary>
+          <div class="field-row">
+            <div class="field">
+              <label for="domain">域 (可选)</label>
+              <input type="text" id="domain" name="domain" placeholder="WORKGROUP">
+            </div>
+            <div class="field">
+              <label for="display-name">我的昵称 (可选)</label>
+              <input type="text" id="display-name" name="displayName" placeholder="如: 手机端" maxlength="24">
+            </div>
+          </div>
+        </details>
+
+        <label class="checkbox-row">
+          <input type="checkbox" id="remember" checked>
+          <span>记住连接信息</span>
+        </label>
+
+        <button type="submit" class="primary-btn" id="connect-btn">连接</button>
+      </form>
     </div>
-    
-    <!-- 远程桌面界面 -->
-    <div class="desktop-container" id="desktop-container">
-        <div class="header">
-            <h1 id="desktop-title">WebRDP</h1>
-            <div class="controls">
-                <span id="status" class="status disconnected">Disconnected</span>
-                <button id="disconnect-btn">断开</button>
-                <button id="reconnect-btn">重连</button>
-                <button id="fullscreen-btn">全屏</button>
-                <button id="back-btn">返回</button>
-            </div>
-        </div>
-        
-        <div class="rdp-container" id="rdp-container">
-            <div id="rdp-display">
-                <div class="loading" id="loading">
-                    <div class="spinner"></div>
-                    <p>正在连接...</p>
-                </div>
-            </div>
-            <div class="scroll-hint" id="scroll-hint">可左右滑动查看完整桌面</div>
-            <div class="touch-hint" id="touch-hint">👆 单指操作鼠标 | 👆👆 双指滚动查看</div>
-        </div>
-        
-        <div class="footer">
-            <div class="connection-info">
-                <span>主机: <span id="footer-host">-</span></span>
-                <span>端口: <span id="footer-port">3389</span></span>
-                <span>用户: <span id="footer-user">-</span></span>
-            </div>
-            <div class="resolution-controls">
-                <label>宽度:</label>
-                <input type="number" id="footer-width" value="1024" min="800" max="3840">
-                <label>高度:</label>
-                <input type="number" id="footer-height" value="768" min="600" max="2160">
-                <button id="resize-btn">应用</button>
-            </div>
-        </div>
+  </main>
+
+  <!-- 远程桌面界面 -->
+  <div class="desktop-view" id="desktop-view" hidden>
+    <!-- 紧凑单行顶栏 -->
+    <header class="topbar" id="topbar">
+      <div class="topbar-left">
+        <span class="status-dot" id="status-dot" data-status="disconnected" title="未连接"></span>
+        <span class="topbar-title" id="desktop-title">WebRDP</span>
+        <span class="duration" id="session-duration" title="真实会话连接时长">--:--</span>
+        <button type="button" class="pill-btn roster-btn" id="roster-btn" title="在线成员">
+          <span class="icon">👥</span><span id="roster-count">1</span>
+        </button>
+      </div>
+
+      <div class="topbar-right">
+        <span class="ctl-badge" id="control-badge" hidden>主控</span>
+        <button type="button" class="ctl-btn" id="control-btn" hidden>接管</button>
+        <button type="button" class="icon-btn" id="kb-btn" title="键盘 (三指轻点亦可切换)" aria-label="键盘">⌨</button>
+        <button type="button" class="icon-btn" id="more-btn" title="更多操作" aria-label="更多操作">⋯</button>
+      </div>
+    </header>
+
+    <!-- 在线成员浮层 -->
+    <div class="popover roster-popover" id="roster-popover" hidden>
+      <div class="popover-title">共享会话成员</div>
+      <ul class="roster-list" id="roster-list"></ul>
+      <div class="roster-meta" id="roster-meta" hidden></div>
     </div>
 
-    <script src="guacamole-common-js/dist/guacamole-common.min.js"></script>
-    <script src="app.js?v=1.0.1"></script>
+    <!-- 远程画面主舞台 -->
+    <div class="stage" id="stage" tabindex="0">
+      <div class="canvas-host" id="canvas-host"></div>
+
+      <!-- 非阻塞状态横幅（重连/网络抖动/已断开） -->
+      <div class="status-banner" id="status-banner" hidden>
+        <span id="banner-text"></span>
+        <button type="button" class="banner-btn" id="banner-btn" hidden>立即重连</button>
+      </div>
+
+      <!-- 首次连接或不可恢复错误遮罩 -->
+      <div class="stage-overlay" id="stage-overlay" hidden>
+        <div class="spinner" id="overlay-spinner"></div>
+        <p class="overlay-text" id="overlay-text">正在连接...</p>
+        <div class="overlay-actions" id="overlay-actions" hidden>
+          <button type="button" class="btn btn-primary" id="overlay-retry">重试</button>
+          <button type="button" class="btn btn-ghost" id="overlay-back">返回修改</button>
+        </div>
+      </div>
+
+      <!-- 轻提示 -->
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    </div>
+
+    <!-- 移动端/快捷扩展键栏（随键盘呼出显示） -->
+    <div class="kb-bar" id="kb-bar" hidden>
+      <button type="button" data-key="Escape">Esc</button>
+      <button type="button" data-key="Tab">Tab</button>
+      <button type="button" data-key="Control" data-sticky="1">Ctrl</button>
+      <button type="button" data-key="Alt" data-sticky="1">Alt</button>
+      <button type="button" data-key="Meta" data-sticky="1">Win</button>
+      <button type="button" data-key="Delete">Del</button>
+      <button type="button" data-action="rclick">右键</button>
+      <button type="button" data-key="ArrowLeft">←</button>
+      <button type="button" data-key="ArrowUp">↑</button>
+      <button type="button" data-key="ArrowDown">↓</button>
+      <button type="button" data-key="ArrowRight">→</button>
+      <button type="button" data-action="cad">C+A+D</button>
+      <button type="button" class="kb-close" data-action="close">收起</button>
+    </div>
+
+    <!-- 隐藏输入代理（用于移动端软键盘与中文输入法） -->
+    <textarea id="ime-input" class="ime-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-hidden="true"></textarea>
+
+    <!-- 更多功能抽屉 -->
+    <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+    <aside class="drawer" id="more-drawer" hidden>
+      <div class="drawer-section">
+        <div class="drawer-label">连接目标</div>
+        <div class="drawer-info" id="info-target">-</div>
+      </div>
+
+      <div class="drawer-section">
+        <div class="drawer-label">触屏操作模式</div>
+        <div class="seg-group">
+          <button type="button" class="seg-btn" id="mode-touchpad">触控板</button>
+          <button type="button" class="seg-btn" id="mode-touch">直接触控</button>
+        </div>
+        <label class="toggle-row">
+          <input type="checkbox" id="scroll-lock">
+          <span>双指滑动优先滚轮（而非拖动画布）</span>
+        </label>
+        <div class="drawer-hint">单指点击/拖拽 · 双指轻点或长按右键 · 双指捏合缩放 · 三指轻点键盘</div>
+      </div>
+
+      <div class="drawer-section">
+        <div class="drawer-label">画面缩放</div>
+        <div class="seg-group">
+          <button type="button" class="seg-btn" id="zoom-fit">适应全屏</button>
+          <button type="button" class="seg-btn" id="zoom-height">适应高度</button>
+          <button type="button" class="seg-btn" id="zoom-100">1:1</button>
+        </div>
+      </div>
+
+      <div class="drawer-section">
+        <div class="drawer-label">远程分辨率</div>
+        <div class="res-row">
+          <input type="number" id="res-width" min="640" max="3840" value="1024">
+          <span>×</span>
+          <input type="number" id="res-height" min="480" max="2160" value="768">
+          <button type="button" class="btn btn-primary btn-sm" id="res-apply">应用</button>
+        </div>
+      </div>
+
+      <div class="drawer-section drawer-actions">
+        <button type="button" class="btn btn-ghost" id="btn-paste">粘贴本地剪贴板</button>
+        <button type="button" class="btn btn-ghost" id="btn-cad">发送 Ctrl+Alt+Del</button>
+        <button type="button" class="btn btn-ghost" id="btn-fullscreen">全屏切换</button>
+        <button type="button" class="btn btn-ghost" id="btn-reconnect">重新连接</button>
+        <button type="button" class="btn btn-danger" id="btn-disconnect">断开连接</button>
+        <button type="button" class="btn btn-ghost" id="btn-back">返回登录页</button>
+      </div>
+    </aside>
+  </div>
+
+  <script src="guacamole-common-js/dist/guacamole-common.min.js"></script>
+  <script type="module" src="js/main.js"></script>
 </body>
 </html>
